@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 D-LAB-5
+"""
+nodered.py — the bridge to Node-RED, the backbone of an IoT edge (as in
+DigitalHome's digitalhome-edge). Owned by the edge layer.
+
+Node-RED owns the devices; everything else calls Node-RED (DigitalHome's
+rule: Claude → MCP → flows → devices). This bridge therefore never talks to a
+device itself. It reads which flows exist, and calls a flow's own HTTP
+endpoint (an "http in" node) with a JSON body. Changing what a device does is
+a proposal the person confirms, like every change from the chat.
+
+    NODERED_URL     {{ nodered_url }} (or ${{ env_prefix }}_NODERED_URL)
+    token           ${{ env_prefix }}_NODERED_TOKEN, when the admin API is protected
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import urllib.error
+import urllib.request
+from typing import Any, Dict, List, Optional
+
+from .. import settings
+
+TIMEOUT_S = 15
+
+
+def base() -> str:
+    return os.environ.get(f"{settings.ENV}_NODERED_URL", "{{ nodered_url }}").rstrip("/")
+
+
+def _request(method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Any:
+    req = urllib.request.Request(f"{base()}{path}", method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Content-Type": "application/json", "Accept": "application/json"})
+    token = os.environ.get(f"{settings.ENV}_NODERED_TOKEN")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+        raw = resp.read()
+        return json.loads(raw) if raw else {}
+
+
+def available() -> Dict[str, Any]:
+    try:
+        _request("GET", "/settings")
+        return {"available": True, "url": base()}
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return {"available": False, "url": base(), "why": str(getattr(exc, "reason", exc))}
+
+
+def flows() -> List[Dict[str, Any]]:
+    """The flow tabs and their HTTP endpoints: what this edge can ask Node-RED to do."""
+    nodes = _request("GET", "/flows")
+    nodes = nodes.get("flows", nodes) if isinstance(nodes, dict) else nodes
+    tabs = {n["id"]: {"id": n["id"], "label": n.get("label"), "endpoints": []} for n in nodes if n.get("type") == "tab"}
+    for n in nodes:
+        if n.get("type") == "http in" and n.get("z") in tabs:
+            tabs[n["z"]]["endpoints"].append({"method": (n.get("method") or "get").upper(), "url": n.get("url")})
+    return list(tabs.values())
+
+
+def call(path: str, body: Optional[Dict[str, Any]] = None, method: str = "POST") -> Any:
+    """A flow's own HTTP endpoint ("http in"), e.g. call("/lights/livingroom", {"on": true})."""
+    if not path.startswith("/") or ".." in path:
+        raise ValueError("path is a flow endpoint, starting with /")
+    return _request(method.upper(), path, body)
+
+
+def add_tools(server: Any) -> None:
+    """Node-RED as MCP tools; changes go through act() (a proposal in the panel)."""
+    from ..mcp_tools import act
+
+    @server.tool()
+    def nodered_status() -> dict:
+        """Whether Node-RED answers, and where."""
+        return available()
+
+    @server.tool()
+    def nodered_flows() -> list:
+        """The flows and the HTTP endpoints each offers."""
+        return flows()
+
+    @server.tool()
+    def nodered_call(path: str, body: Optional[dict] = None) -> Any:
+        """Ask a flow to do something, through its HTTP endpoint (see nodered_flows)."""
+        return act(f"Node-RED: POST {path}", "POST", "/api/nodered/call", {"path": path, "body": body or {}})

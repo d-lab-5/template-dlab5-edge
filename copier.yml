@@ -1,0 +1,111 @@
+# template-dlab5-edge — the edge LAYER over ERP-LAB-5/python-tool-template.
+#
+# A tool is made in two steps, into the same folder:
+#
+#   copier copy gh:ERP-LAB-5/python-tool-template my-edge              # the base
+#   cd my-edge
+#   copier copy --trust --data-file .copier-answers.yml \
+#               -a .copier-answers.edge.yml gh:d-lab-5/template-dlab5-edge .
+#
+# The base owns core/, app.py, the page and the MCP server. This layer owns
+# <package>/edge/ (cloud link, knowledge sync, jobs, chat, first start,
+# bridges) and the install and release scripts. Each updates on its own:
+# `copier update` for the base, `copier update -a .copier-answers.edge.yml`
+# for this layer.
+
+_min_copier_version: "9.4"
+_subdirectory: template
+_templates_suffix: .jinja
+_answers_file: .copier-answers.edge.yml
+
+# The tool owns these once made: its settings and its own tests of them.
+_skip_if_exists:
+  - "{{ package_name }}/edge/settings.py"
+  - "{{ package_name }}/__main__.py"
+  - "{{ package_name }}/edge/ontology/**"
+
+# Wire the layer into the tool's own files (pyproject, app.py, the page):
+# idempotent, and it says what it could not do instead of guessing.
+_tasks:
+  - "{{ _copier_python }} scripts/edge-wire.py"
+
+_message_after_copy: |
+  The edge layer is in {{ _copier_conf.dst_path }}/{{ package_name }}/edge/.
+
+    ./test.sh
+    ./run.sh                      # http://127.0.0.1:{{ port }}  → Connections
+
+  Then, by hand:
+    - {{ package_name }}/edge/settings.py: the chat's prompt and allowed calls,
+      the first-start steps, the facts that may have only one value
+    - {{ package_name }}/edge/ontology/: copy the cloud's packages/ontology
+      (tbox, concepts, shapes), so this edge validates the same way
+  Read docs/edge.md for what belongs to the layer and what to the tool.
+
+# -- what the base already asked (pass its answers with --data-file) --------
+
+tool_name:
+  type: str
+  help: The tool's name, as in the base template's answers
+package_name:
+  type: str
+  default: "{{ tool_name | replace('-', '_') }}"
+title:
+  type: str
+  default: "{{ tool_name }}"
+port:
+  type: int
+  default: 8770
+github_org:
+  type: str
+  default: d-lab-5
+repo_name:
+  type: str
+  default: "{{ tool_name }}"
+with_mcp:
+  type: bool
+  default: true
+with_workspace:
+  type: bool
+  default: true
+
+# -- the edge -----------------------------------------------------------------
+
+edge_kind:
+  type: str
+  help: What this edge is. human = a PC app for a person; iot = a home server with a Node-RED backbone; robot = a ROS 2 robot
+  choices:
+    human: human
+    iot: iot
+    robot: robot
+  default: human
+
+cloud_name:
+  type: str
+  help: What people call the cloud this edge links to (shown on the page and in the chat)
+  default: the cloud
+
+tenant_noun:
+  type: str
+  help: What the cloud calls a tenant (household, home, team …), as shown to people
+  default: tenant
+
+space_noun:
+  type: str
+  help: What the cloud calls a space (vault, room …), as shown to people
+  default: space
+
+env_prefix:
+  type: str
+  help: Prefix of this edge's environment variables
+  default: "{{ package_name | upper }}"
+  validator: >-
+    {% if not (env_prefix | regex_search('^[A-Z][A-Z0-9_]*$')) %}
+    uppercase letters, digits and _
+    {% endif %}
+
+nodered_url:
+  type: str
+  help: Where Node-RED answers on this machine
+  default: http://127.0.0.1:1880
+  when: "{{ edge_kind == 'iot' }}"

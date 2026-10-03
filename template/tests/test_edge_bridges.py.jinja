@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The bridge of this edge's kind ({{ edge_kind }}) imports, and says when its
+backbone is not there instead of failing."""
+
+from __future__ import annotations
+
+import importlib
+
+
+def test_the_bridge_imports_without_its_backbone():
+{%- if edge_kind == "iot" %}
+    nodered = importlib.import_module("{{ package_name }}.edge.bridges.nodered")
+    import os
+    os.environ["{{ env_prefix }}_NODERED_URL"] = "http://127.0.0.1:9"      # nothing listens there
+    assert nodered.available()["available"] is False
+{%- elif edge_kind == "robot" %}
+    ros2 = importlib.import_module("{{ package_name }}.edge.bridges.ros2")
+    assert set(ros2.available()) >= {"available"}
+{%- else %}
+    importlib.import_module("{{ package_name }}.edge.bridges")      # a human edge has none
+{%- endif %}

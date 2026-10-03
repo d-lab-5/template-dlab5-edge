@@ -1,0 +1,20 @@
+# Node-RED, the backbone of this IoT edge, next to it on the same machine.
+# Node-RED owns the devices; the edge calls its flows (edge/bridges/nodered.py).
+# DigitalHome's digitalhome-edge runs the same shape with its own flows and
+# palettes: start from its deploy/ when you need those.
+#
+#   docker compose -f deploy/compose.yml up -d
+#
+# Node-RED listens on this machine only. Protect its editor (adminAuth in
+# data/settings.js) before anything else can reach it, and give the edge the
+# token in {{ env_prefix }}_NODERED_TOKEN.
+services:
+  nodered:
+    image: nodered/node-red:4.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1880:1880"
+    volumes:
+      - ./nodered-data:/data
+    environment:
+      TZ: Europe/Berlin

@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""python -m {{ package_name }} — start the edge on http://127.0.0.1:{{ port }}.
+
+Run this way (an installed package rather than a checkout), its files live
+in the platform's own place for application data unless --dir says otherwise:
+
+    Linux    ~/.local/share/{{ tool_name }}/mydocs   ($XDG_DATA_HOME respected)
+    macOS    ~/Library/Application Support/{{ tool_name }}/mydocs
+    Windows  %LOCALAPPDATA%\\{{ tool_name }}\\mydocs
+
+Written once by the edge layer; the tool owns it afterwards.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+
+def data_home() -> Path:
+    if os.environ.get("{{ env_prefix }}_EDGE_HOME"):          # the installers set it
+        return Path(os.environ["{{ env_prefix }}_EDGE_HOME"]).expanduser()
+    if sys.platform == "win32":
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "{{ tool_name }}"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "{{ tool_name }}"
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "{{ tool_name }}"
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    home = data_home()
+    home.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(home, 0o700)
+    except OSError:
+        pass
+    os.environ.setdefault("{{ env_prefix }}_EDGE_DATA", str(home))
+{%- if with_workspace %}
+    if "--dir" not in args and not any(a.startswith("--dir=") for a in args):
+        args = ["--dir", str(home / "mydocs"), *args]
+{%- endif %}
+    from .app import main as web
+    return web(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
