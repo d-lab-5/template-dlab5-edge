@@ -51,6 +51,8 @@ for kind in "${KINDS[@]}"; do
   grep -q "edge-connections" "$dst/$pkg/templates/index.html"
   grep -q "pyshacl" "$dst/requirements.txt"
   grep -q "\"$pkg.edge\"" "$dst/pyproject.toml"
+  python3 -c 'import json,sys; p=json.load(open(sys.argv[1]))["enabledPlugins"]; sys.exit(0 if p.get("dlab5-edge-template@d-lab-5") else 1)' "$dst/.claude/settings.json" \
+    || { echo "   .claude/settings.json does not enable dlab5-edge-template"; exit 1; }
   [ -f "$dst/.copier-answers.edge.yml" ] || { echo "   no .copier-answers.edge.yml"; exit 1; }
   echo "   wired"
   if [ "$port" = 18790 ]; then

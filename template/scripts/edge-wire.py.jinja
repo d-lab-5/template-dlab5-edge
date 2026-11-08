@@ -13,10 +13,12 @@ SAYS what it could not do instead of guessing:
     app.py             edge_routes.install(app); start_background() in main()
     mcp_server.py      add_edge_tools(server)
     the page           the Connections and Chat panels
+    .claude/settings.json  the dlab5-edge-template plugin, beside the base's
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -89,11 +91,31 @@ def page(text: str):
     return text.replace("</body>", assets + "</body>", 1) if "</body>" in text else text + assets
 
 
+def settings() -> None:
+    """Enable the edge's plugin beside what the base enabled; keep the rest."""
+    path = ROOT / ".claude" / "settings.json"
+    try:
+        data = json.loads(path.read_text()) if path.exists() else {}
+    except ValueError:
+        todo.append(".claude/settings.json is not JSON: enable dlab5-edge-template@d-lab-5 by hand")
+        return
+    plugins = data.setdefault("enabledPlugins", {})
+    if "dlab5-edge-template@d-lab-5" in plugins:
+        return
+    data.setdefault("extraKnownMarketplaces", {}).setdefault(
+        "d-lab-5", {"source": {"source": "github", "repo": "d-lab-5/agent-skills"}})
+    plugins["dlab5-edge-template@d-lab-5"] = True
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"  wired {path.relative_to(ROOT)}")
+
+
 patch(ROOT / "pyproject.toml", f'"{PKG}.edge"', pyproject)
 patch(ROOT / "requirements.txt", "pyshacl", requirements)
 patch(ROOT / PKG / "app.py", "edge_routes.install(app)", app_py)
 {% if with_mcp %}patch(ROOT / PKG / "mcp_server.py", "add_edge_tools(server)", mcp_py){% endif %}
 patch(ROOT / PKG / "templates" / "index.html", "edge-connections", page)
+settings()
 
 if todo:
     print("\n  edge-wire: by hand, please —")
