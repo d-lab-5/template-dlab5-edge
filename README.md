@@ -35,6 +35,9 @@ copier copy --trust --data-file .copier-answers.yml \
   writes from other sites, cannot be framed.
 - **Installers** a cloud offers in its Settings → Edges (`python install_….py`
   on any OS, or a shell script), SHA-256 checked, no admin rights.
+- **Its skills**: `dlab5-edge-template` enabled in `.claude/settings.json`,
+  beside the base's `dlab5-house`, `pytool-kit` and the domain's plugin, so
+  every session in the edge loads them from the d-lab-5 catalogue.
 - **Edge kinds**: `edge_kind` = `human` (a PC app), `iot` (a Node-RED bridge
   and a compose file) or `robot` (a ROS 2 bridge, imported only when ROS is
   there).
