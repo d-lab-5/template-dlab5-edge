@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "d-lab-5": { "source": { "source": "github", "repo": "d-lab-5/agent-skills" } }
+  },
+  "enabledPlugins": {
+    "dlab5-house@d-lab-5": true,
+    "dlab5-edge-template@d-lab-5": true,
+    "pytool-kit@d-lab-5": true
+  }
+}
