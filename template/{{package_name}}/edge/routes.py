@@ -16,7 +16,9 @@ the one call that wires the layer into a tool. Owned by the edge layer.
     POST /api/jobs/<id>/cancel
     GET  /api/knowledge                 the local A-Boxes
     POST /api/knowledge/sync            {graph?}: a job, every linked connection
-    GET|POST /api/chat …                the chat panel (chat.py)
+    GET|POST /api/chat …                the chat panel (chat.py): ask, new, stop
+    GET  /api/chat/history[/<session>]  the last ten conversations; POST …/resume continues one
+    GET|POST /api/chat/proposals        what the chat proposed; POST …/<id>/confirm|dismiss
 """
 
 from __future__ import annotations
@@ -194,16 +196,36 @@ _CHAT: Dict[str, Any] = {}
 
 def chat_state() -> Tuple[chat_mod.Proposals, chat_mod.Chat]:
     if not _CHAT:
-        # a private, owner-only folder: Claude Code writes its session here
-        _CHAT["proposals"] = chat_mod.Proposals()
+        # waiting proposals and the history live in the edge's data folder;
+        # Claude Code's own session goes to a private folder made for this run
+        # (0700, a name nobody can guess or make first): outside the home
+        # folder, so no other project's CLAUDE.md is read
+        _CHAT["proposals"] = chat_mod.Proposals(kn.data_dir() / "chat-proposals.json")
         _CHAT["chat"] = chat_mod.Chat(Path(tempfile.mkdtemp(prefix=f"{settings.TOOL}-chat-")))
+        _CHAT["history"] = chat_mod.History(kn.data_dir() / "chat-history.json")
     return _CHAT["proposals"], _CHAT["chat"]
+
+
+def chat_history() -> chat_mod.History:
+    chat_state()
+    return _CHAT["history"]
+
+
+def chat_selection() -> Optional[str]:
+    """What the person has chosen on the tool's page, if the tool has such a
+    thing: settings.CHAT_SELECTION, a function returning a string that changes
+    when the selection does (or None). The tool's own MCP tool reads the items."""
+    get = getattr(settings, "CHAT_SELECTION", None)
+    try:
+        return get() if callable(get) else None
+    except Exception:                               # a tool's hook must not break the chat
+        return None
 
 
 @bp.get("/api/chat")
 def chat_status():
     proposals, talk = chat_state()
-    return jsonify({**chat_mod.available(), "session": bool(talk.session),
+    return jsonify({**chat_mod.available(), "session": bool(talk.session), "answering": talk.proc is not None,
                     "waiting": [p for p in proposals.items.values() if p["state"] == "waiting"]})
 
 
@@ -219,13 +241,20 @@ def chat_ask():
     lang = data.get("lang") if data.get("lang") in ("en", "de", "fr") else "en"
     port = int(request.host.rsplit(":", 1)[-1]) if ":" in request.host else 80
     proposals, talk = chat_state()
+    selection = chat_selection()
 
     def stream():
-        for ev in talk.ask(message, port, lang):
+        told = proposals.news()                    # what the person confirmed or dismissed meanwhile
+        for ev in talk.ask(told + message, port, lang, selection):
             if ev["t"] == "proposal":
                 p = proposals.items.get(ev["id"])
                 if p:
                     ev = {**ev, "summary": p["summary"], "state": p["state"]}
+            elif ev["t"] == "done" and talk.session:
+                try:                               # into the history, so it outlives a restart
+                    chat_history().record(talk.session, chat_mod.transcript_path(talk.workdir, talk.session))
+                except (OSError, ValueError):
+                    pass
             yield json.dumps(ev) + "\n"
     return Response(stream(), mimetype="application/x-ndjson", headers={"Cache-Control": "no-store"})
 
@@ -240,6 +269,39 @@ def chat_new():
 def chat_stop():
     chat_state()[1].stop()
     return jsonify({"ok": True})
+
+
+@bp.get("/api/chat/history")
+def chat_history_list():
+    """The last ten conversations, newest first."""
+    talk = chat_state()[1]
+    return jsonify({"items": chat_history().items(), "current": talk.session})
+
+
+@bp.get("/api/chat/history/<session>")
+def chat_history_one(session: str):
+    try:
+        return jsonify(chat_history().get(session))
+    except KeyError:
+        abort(404, "no such conversation in the history")
+
+
+@bp.post("/api/chat/history/<session>/resume")
+def chat_history_resume(session: str):
+    """Continue an earlier conversation: Claude remembers what was said."""
+    talk = chat_state()[1]
+    if talk.proc is not None:
+        abort(409, "Claude is still answering; stop it first")
+    try:
+        return jsonify(chat_history().resume(talk, session))
+    except KeyError:
+        abort(404, "no such conversation in the history")
+
+
+@bp.get("/api/chat/proposals")
+def chat_proposals():
+    """Every proposal of this run and what became of it (the proposals() tool)."""
+    return jsonify(chat_state()[0].listing())
 
 
 @bp.post("/api/chat/proposals")
@@ -260,18 +322,32 @@ def chat_decide(pid: str, what: str):
     from flask import current_app
     if what not in ("confirm", "dismiss"):
         abort(404)
+    proposals = chat_state()[0]
     try:
-        p = chat_state()[0].take(pid, "confirmed" if what == "confirm" else "dismissed")
+        p = proposals.take(pid, "confirmed" if what == "confirm" else "dismissed")
     except KeyError:
-        abort(404, "no such proposal")
+        abort(404, "this proposal is gone: the edge was restarted since it was made. Ask the chat to propose it again.")
     except ValueError as exc:
         abort(409, str(exc))
     if what == "dismiss":
         return jsonify({"state": "dismissed"})
     with current_app.test_client() as c:
         r = c.open(p["path"], method=p["method"], json=p["body"], headers={"Host": request.host})
-    return jsonify({"state": "confirmed", "status": r.status_code, "result": r.get_json(silent=True)}), \
+    result = r.get_json(silent=True)
+    problem = None if r.status_code < 400 else _problem(result, r.status_code)
+    proposals.ran(pid, problem is None, problem)
+    return jsonify({"state": "confirmed", "status": r.status_code, "result": result, "problem": problem}), \
         (200 if r.status_code < 400 else 502)
+
+
+def _problem(result: Any, status: int) -> str:
+    """Why a confirmed proposal failed, in a line the chat and the page can show."""
+    if isinstance(result, dict):
+        if result.get("errors"):
+            return "; ".join(map(str, result["errors"]))
+        if result.get("description") or result.get("error"):
+            return str(result.get("description") or result.get("error"))
+    return f"HTTP {status}"
 
 
 # ------------------------------------------------------------------ bridges --

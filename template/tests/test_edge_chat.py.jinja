@@ -1,0 +1,121 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The chat panel's memory: proposals that outlive a restart and are checked
+again, the person's decisions told to Claude, and the history of the last
+conversations, continued in a new run's folder."""
+
+from __future__ import annotations
+
+import json
+import os
+import stat
+
+import pytest
+
+from {{ package_name }}.edge import chat
+
+
+SESSION = "0a1b2c3d-0000-4000-8000-00000000abcd"
+
+
+def test_ids_differ_per_run_and_the_stream_finds_them(tmp_path):
+    a, b = chat.Proposals(), chat.Proposals()
+    pa = a.add("sync", "POST", "/api/knowledge/sync", {})["id"]
+    pb = b.add("sync", "POST", "/api/knowledge/sync", {})["id"]
+    assert pa != pb
+    result = {"type": "user", "message": {"content": [{"type": "tool_result",
+              "content": [{"type": "text", "text": json.dumps({"proposal": pa, "status": "proposed"})}]}]}}
+    assert list(chat.events([json.dumps(result)])) == [{"t": "proposal", "id": pa}]
+
+
+def test_waiting_proposals_outlive_a_restart_and_are_checked_again(tmp_path):
+    path = tmp_path / "chat-proposals.json"
+    first = chat.Proposals(path)
+    pid = first.add("sync", "POST", "/api/knowledge/sync", {})["id"]
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    saved = json.loads(path.read_text())
+    # someone edits the file: a call the chat may not propose
+    saved.append({**saved[0], "id": "p000000-9", "path": "/api/shutdown"})
+    path.write_text(json.dumps(saved))
+    again = chat.Proposals(path)
+    assert list(again.items) == [pid]
+    again.take(pid, "dismissed")
+    assert chat.Proposals(path).items == {}
+
+
+def test_decisions_are_told_once_with_the_next_message():
+    p = chat.Proposals()
+    ok = p.add("sync", "POST", "/api/knowledge/sync", {})["id"]
+    bad = p.add("link", "POST", "/api/cloud/link", {})["id"]
+    no = p.add("use", "POST", "/api/cloud/use", {})["id"]
+    p.take(ok, "confirmed"); p.ran(ok, True)
+    p.take(bad, "confirmed"); p.ran(bad, False, "send a JSON object")
+    p.take(no, "dismissed")
+    told = p.news()
+    assert f"{ok} (sync): confirmed, it ran" in told
+    assert f"{bad} (link): confirmed, but it FAILED: send a JSON object" in told
+    assert f"{no} (use): dismissed" in told
+    assert p.news() == ""
+    states = {x["id"]: (x["state"], x["outcome"]) for x in p.listing()}
+    assert states[bad] == ("confirmed", "failed") and states[no] == ("dismissed", None)
+
+
+def test_a_new_selection_is_announced_once(tmp_path):
+    talk = chat.Chat(tmp_path)
+    assert talk.with_selection("hi", None) == "hi"
+    first = talk.with_selection("hi", "sel-1")
+    assert first.startswith(chat.selection_notice()) and first.endswith("hi")
+    assert talk.with_selection("again", "sel-1") == "again"
+    talk.new()
+    assert talk.with_selection("hi", "sel-1") != "hi"
+
+
+def test_the_rules_follow_the_tools_own_prompt():
+    prompt = chat.system_prompt("en")
+    assert "proposals()" in prompt and "In the panel since" in prompt
+
+
+@pytest.fixture
+def claude_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    return tmp_path / "claude"
+
+
+def _conversation(path, *said):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for i, (kind, text) in enumerate(said):
+        lines.append(json.dumps({"type": kind, "timestamp": f"2026-01-01T00:00:0{i}Z",
+                                 "message": {"content": [{"type": "text", "text": text}]}}))
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_the_history_keeps_the_last_ones_and_continues_one(tmp_path, claude_home):
+    old_run, new_run = tmp_path / "run-1", tmp_path / "run-2"
+    file = chat.transcript_path(old_run, SESSION)
+    told = chat.Proposals()
+    told.take(told.add("sync", "POST", "/api/knowledge/sync", {})["id"], "dismissed")
+    _conversation(file, ("user", told.news() + "How many statements?"), ("assistant", "Twelve."))
+    history = chat.History(tmp_path / "data" / "chat-history.json", keep=2)
+    entry = history.record(SESSION, file)
+    assert entry["title"] == "How many statements?" and entry["said"] == 2
+    assert stat.S_IMODE(os.stat(history.path).st_mode) == 0o600
+    assert "file" not in history.items()[0]
+
+    talk = chat.Chat(new_run)
+    got = history.resume(talk, SESSION)
+    assert talk.session == SESSION and chat.transcript_path(new_run, SESSION).is_file()
+    assert [m["who"] for m in got["messages"]] == ["me", "claude"]
+    assert got["messages"][0]["text"] == "How many statements?"
+
+    for n in range(3):
+        other = f"0a1b2c3d-0000-4000-8000-00000000000{n}"
+        _conversation(chat.transcript_path(old_run, other), ("user", f"q{n}"))
+        history.record(other, chat.transcript_path(old_run, other))
+    assert [i["title"] for i in history.items()] == ["q2", "q1"]
+    with pytest.raises(KeyError):
+        history.get(SESSION)
+
+
+def test_the_history_refuses_what_is_not_a_conversation_id(tmp_path):
+    with pytest.raises(ValueError):
+        chat.History(tmp_path / "h.json").record("../../etc/passwd", tmp_path / "x")

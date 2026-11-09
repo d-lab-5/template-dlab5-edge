@@ -21,7 +21,7 @@
     const r = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : {},
                                   body: body ? JSON.stringify(body) : undefined });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error((data.errors && data.errors[0]) || data.description || `${r.status}`);
+    if (!r.ok) throw new Error((data.errors && data.errors[0]) || data.problem || data.description || `${r.status}`);
     return data;
   }
   const host = (u) => { try { return new URL(u).host; } catch { return u || ""; } };
@@ -63,26 +63,40 @@
   }
 
   // ------------------------------------------------------------------- chat --
+  // Proposals wait for a click (and outlive a restart); the last ten
+  // conversations can be read again and continued (History).
   const chatBox = $("#edge-chat");
   async function chatPanel() {
     if (!chatBox) return;
     const st = await api("GET", "/api/chat").catch(() => ({ available: false, why: "no answer" }));
     if (!st.available) { chatBox.replaceChildren(el("h2", {}, "Chat"), el("p", { class: "edge-muted" }, st.why)); return; }
     const log = el("div", { class: "edge-chat__log", "aria-live": "polite" });
+    const past = el("div", { class: "edge-chat__history", hidden: true });
     const input = el("textarea", { rows: 2, placeholder: "Ask about this edge…" });
-    const decide = (id, what, row) => api("POST", `/api/chat/proposals/${id}/${what}`)
-      .then((r) => row.replaceChildren(what === "confirm" ? `✓ done (${r.status})` : "dismissed"))
-      .catch((e) => row.replaceChildren(e.message));
+    const say = (who, text) => { const p = el("p", { class: `edge-chat__${who}` }, text); log.append(p); return p; };
+    const decide = (id, what, row) => {
+      row.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+      return api("POST", `/api/chat/proposals/${id}/${what}`)
+        .then((r) => row.replaceChildren(row.dataset.summary, " — ", what === "confirm" ? "✓ done" : "dismissed"))
+        .catch((e) => row.replaceChildren(row.dataset.summary, " — ", el("span", { class: "err" }, e.message)));
+    };
+    const proposal = (p) => {
+      const row = el("p", { class: "edge-chat__proposal" }, p.summary || p.id, " ",
+        el("button", { type: "button", on: { click: () => decide(p.id, "confirm", row) } }, "Confirm"), " ",
+        el("button", { type: "button", on: { click: () => decide(p.id, "dismiss", row) } }, "Dismiss"));
+      row.dataset.summary = p.summary || p.id;
+      log.append(row);
+    };
+    (st.waiting || []).forEach(proposal);
     async function send() {
       const message = input.value.trim();
       if (!message) return;
       input.value = "";
-      log.append(el("p", { class: "edge-chat__me" }, message));
-      const answer = el("p", { class: "edge-chat__them" });
-      log.append(answer);
+      say("me", message);
+      const answer = say("them", "");
       const r = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, lang: (document.documentElement.lang || "en").slice(0, 2) }) });
-      if (!r.ok || !r.body) { answer.textContent = `error ${r.status}`; return; }
+        body: JSON.stringify({ message, lang: (document.documentElement.lang || "en").slice(0, 2) }) }).catch(() => null);
+      if (!r || !r.ok || !r.body) { answer.textContent = `error ${r ? r.status : "no answer"}`; return; }
       const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
       for (;;) {
         const { value, done } = await reader.read();
@@ -93,20 +107,41 @@
           const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
           let ev; try { ev = JSON.parse(line); } catch { continue; }
           if (ev.t === "text") answer.append(ev.text);
-          else if (ev.t === "proposal") {
-            const row = el("p", { class: "edge-chat__proposal" }, ev.summary || ev.id, " ",
-              el("button", { type: "button", on: { click: () => decide(ev.id, "confirm", row) } }, "Confirm"), " ",
-              el("button", { type: "button", on: { click: () => decide(ev.id, "dismiss", row) } }, "Dismiss"));
-            log.append(row);
-          } else if (ev.t === "done" && ev.error) log.append(el("p", { class: "err" }, ev.error));
+          else if (ev.t === "proposal") proposal(ev);
+          else if (ev.t === "done" && ev.error) log.append(el("p", { class: "err" }, ev.error));
         }
       }
       connections();
     }
-    chatBox.replaceChildren(el("h2", {}, "Chat"), log,
+    async function history() {
+      if (!past.hidden) { past.hidden = true; return; }
+      let h;
+      try { h = await api("GET", "/api/chat/history"); } catch (e) { past.replaceChildren(el("p", { class: "err" }, e.message)); past.hidden = false; return; }
+      const when = (v) => { try { return new Date(v).toLocaleString(); } catch { return v || ""; } };
+      const go = async (session, btn) => {
+        btn.disabled = true;
+        let r;
+        try { r = await api("POST", `/api/chat/history/${encodeURIComponent(session)}/resume`, {}); }
+        catch (e) { btn.disabled = false; past.append(el("p", { class: "err" }, e.message)); return; }
+        past.hidden = true;
+        log.replaceChildren(el("p", { class: "edge-muted" }, `Continuing: ${r.title || "a conversation"}`));
+        r.messages.forEach((m) => say(m.who === "me" ? "me" : "them", m.text));
+      };
+      past.replaceChildren(h.items.length ? el("ul", {}, h.items.map((i) => el("li", {},
+        el("b", {}, i.title || "(untitled)"), " ",
+        el("span", { class: "edge-muted" }, `${when(i.updated)} · ${i.said || 0} messages`), " ",
+        i.session === h.current ? el("span", { class: "edge-tag" }, "now")
+          : el("button", { type: "button", on: { click: (ev) => go(i.session, ev.target) } }, "Continue"))))
+        : el("p", { class: "edge-muted" }, "No conversations yet."));
+      past.hidden = false;
+    }
+    input.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); send(); } });
+    chatBox.replaceChildren(el("h2", {}, "Chat"), past, log,
       el("form", { class: "edge-chat__ask", on: { submit: (ev) => { ev.preventDefault(); send(); } } }, input,
         el("button", { type: "submit" }, "Ask"),
-        el("button", { type: "button", on: { click: () => api("POST", "/api/chat/new").then(() => log.replaceChildren()) } }, "New")));
+        el("button", { type: "button", on: { click: () => api("POST", "/api/chat/stop", {}) } }, "Stop"),
+        el("button", { type: "button", on: { click: () => api("POST", "/api/chat/new", {}).then(() => log.replaceChildren()) } }, "New"),
+        el("button", { type: "button", on: { click: history } }, "History")));
   }
 
   connections();

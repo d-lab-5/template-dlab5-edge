@@ -72,6 +72,19 @@ Privacy: what this edge keeps private never reaches you. Names you see are
 the {tenant}'s; use them only to answer.""".format(
     title=TITLE, cloud=CLOUD_NAME, tool=TOOL, tenant=TENANT_NOUN)
 
+# Optional, for a tool whose page lets the person choose items to talk about.
+# CHAT_SELECTION() returns a string that changes when the selection does (a
+# file name, a hash), or None; the chat then tells Claude once that there is
+# a new selection, in these words. Give Claude a tool of your own that reads
+# the items (the Mediathek's is selection()).
+# CHAT_SELECTION = lambda: None
+# CHAT_SELECTION_NOTICE = ("[The person chose a new selection on the page. It replaces any "
+#                          "earlier one: call selection() again before answering.]")
+
+# Openings of messages the page writes itself, never a conversation's title
+# in the history (the person's first own words are).
+CHAT_TITLE_SKIP: List[str] = []
+
 # -- first start ---------------------------------------------------------------
 
 # Steps a new edge runs once (at start, and again after linking) until each

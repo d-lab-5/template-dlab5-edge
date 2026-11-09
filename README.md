@@ -30,7 +30,9 @@ copier copy --trust --data-file .copier-answers.yml \
   new edge fetches by itself (models from the cloud, SHA-256 checked; the
   tenant's knowledge after linking).
 - **A chat panel**: the person's own Claude Code with only this edge's MCP
-  tools; every change is a proposal they confirm.
+  tools; every change is a proposal they confirm. Proposals survive a
+  restart, outcomes are told back to Claude, and the last ten conversations
+  can be continued.
 - **A guard**: the edge answers to this machine only (DNS rebinding), refuses
   writes from other sites, cannot be framed.
 - **Installers** a cloud offers in its Settings → Edges (`python install_….py`

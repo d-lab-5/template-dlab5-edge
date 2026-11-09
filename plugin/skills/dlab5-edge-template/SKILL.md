@@ -52,6 +52,19 @@ downloads). Register the tool's own background work with
 `edge.jobs.JOBS.register(kind, run)`, and its changing MCP tools with
 `edge.mcp_tools.act()` so the chat panel turns them into proposals.
 
+**The chat remembers, on this computer only.** Waiting proposals survive a
+restart (`chat-proposals.json`, rechecked against `CHAT_ALLOWED` on read);
+ids are `p<run>-<n>`, so a card from an earlier run never confirms a newer
+proposal. The person's decisions are told to Claude before their next
+message, and `proposals()` lists every outcome, including why a confirmed
+one failed. The last ten conversations can be read again and continued
+(`chat-history.json`; the transcript is copied into the new run's private
+folder for `--resume`). A tool whose page has a selection sets
+`CHAT_SELECTION` (and optionally `CHAT_SELECTION_NOTICE`) in settings.py and
+gives Claude its own tool that reads the items; `CHAT_TITLE_SKIP` keeps
+page-written prompts out of history titles. Those three are optional: an
+edge whose settings.py predates them works unchanged.
+
 Copy the cloud's `packages/ontology` (tbox/, shapes/) into `edge/ontology/`
 so the edge validates A-Boxes exactly as the cloud does.
 
