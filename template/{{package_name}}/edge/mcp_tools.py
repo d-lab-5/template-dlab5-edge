@@ -44,6 +44,14 @@ def add_edge_tools(server: Any) -> None:
         return web.call("GET", "/api/cloud")
 
     @server.tool()
+    def proposals() -> list:
+        """Every change proposed in this chat and what became of it: state
+        waiting, confirmed or dismissed; for a confirmed one, outcome done or
+        failed, with the problem. Read it before advising what to confirm."""
+        web.ensure_server()
+        return web.call("GET", "/api/chat/proposals")
+
+    @server.tool()
     def jobs() -> list:
         """Background work: each job's kind, state, phase and progress."""
         web.ensure_server()

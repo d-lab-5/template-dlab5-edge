@@ -12,4 +12,6 @@
 .edge-chat__log { max-height: 50vh; overflow-y: auto; display: grid; gap: .3rem; }
 .edge-chat__me { font-weight: 600; } .edge-chat__them { white-space: pre-wrap; }
 .edge-chat__proposal { border-left: 3px solid #e0a800; padding-left: .5rem; }
-.edge-chat__ask { display: flex; gap: .4rem; } .edge-chat__ask textarea { flex: 1; min-width: 0; }
+.edge-chat__ask { display: flex; flex-wrap: wrap; gap: .4rem; } .edge-chat__ask textarea { flex: 1; min-width: 0; }
+.edge-chat__history { border: 1px solid currentColor; border-radius: 4px; padding: .3rem .6rem; margin-bottom: .5rem; }
+.edge-chat__history ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; }
