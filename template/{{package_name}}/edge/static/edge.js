@@ -78,7 +78,26 @@
   const chatBox = $("#edge-chat");
   async function chatPanel() {
     if (!chatBox) return;
+    // a link from this computer's panel carries the key in the fragment,
+    // which never reaches a server: give it once, then forget it
+    const fromLink = /(?:^#|&)chat-key=([A-Za-z0-9_-]+)/.exec(location.hash);
+    if (fromLink) {
+      history.replaceState(null, "", location.pathname + location.search);
+      await api("POST", "/api/chat/key", { key: fromLink[1] }).catch(() => null);
+    }
     const st = await api("GET", "/api/chat").catch(() => ({ available: false, why: "no answer" }));
+    if (!st.available && st.needs_key) {
+      const msg = el("p", { class: "edge-muted" }, st.why);
+      const form = el("form", { class: "edge-chat__key", on: { submit: (ev) => {
+        ev.preventDefault();
+        api("POST", "/api/chat/key", { key: ev.target.key.value.trim() })
+          .then(chatPanel).catch((e) => msg.replaceChildren(el("span", { class: "err" }, e.message)));
+      } } },
+        el("input", { name: "key", required: true, autocomplete: "off", spellcheck: "false", size: 28, placeholder: "chat key" }), " ",
+        el("button", { type: "submit", "data-help": "Use the chat from this computer. The key is asked once; this browser keeps a cookie for a month." }, "Open the chat"));
+      chatBox.replaceChildren(el("h2", {}, "Chat"), msg, form);
+      return;
+    }
     if (!st.available) { chatBox.replaceChildren(el("h2", {}, "Chat"), el("p", { class: "edge-muted" }, st.why)); return; }
     const log = el("div", { class: "edge-chat__log", "aria-live": "polite" });
     const past = el("div", { class: "edge-chat__history", hidden: true });
@@ -98,6 +117,22 @@
       log.append(row);
     };
     (st.waiting || []).forEach(proposal);
+    // started for the network: the key other computers need, on this one only
+    const others = st.network ? el("details", { class: "edge-chat__others" }) : null;
+    async function showKey(fresh) {
+      let k;
+      try { k = fresh ? await api("POST", "/api/chat/key/new", {}) : await api("GET", "/api/chat/key"); }
+      catch (e) { others.replaceChildren(el("summary", {}, "Other computers"), el("p", { class: "err" }, e.message)); return; }
+      const copy = (text) => navigator.clipboard && navigator.clipboard.writeText(text);
+      others.replaceChildren(el("summary", {}, "Other computers"),
+        el("p", { class: "edge-muted" }, "Anyone with this key can use the chat from another computer on the network, as you. Open a link there, or type the key."),
+        el("p", {}, el("code", {}, k.key), " ",
+          el("button", { type: "button", "data-help": "Copy the key.", on: { click: () => copy(k.key) } }, "Copy"), " ",
+          el("button", { type: "button", "data-help": "Make a new key. Every other computer has to give the new one before it can chat again.", on: { click: () => showKey("POST") } }, "New key")),
+        el("ul", {}, (k.links || []).map((u) => el("li", {}, el("code", {}, u.replace(/#.*/, "#chat-key=…")), " ",
+          el("button", { type: "button", "data-help": "Copy this link, with the key, to open on the other computer.", on: { click: () => copy(u) } }, "Copy link")))));
+    }
+    if (others) { others.append(el("summary", {}, "Other computers")); others.addEventListener("toggle", () => { if (others.open) showKey(); }, { once: true }); }
     async function send() {
       const message = input.value.trim();
       if (!message) return;
@@ -151,7 +186,8 @@
         el("button", { type: "submit", "data-help": "Send it to Claude on this computer. Enter sends too; Shift+Enter starts a new line." }, "Ask"),
         el("button", { type: "button", "data-help": "Stop the answer being written.", on: { click: () => api("POST", "/api/chat/stop", {}) } }, "Stop"),
         el("button", { type: "button", "data-help": "Start a new conversation. The last one stays in History.", on: { click: () => api("POST", "/api/chat/new", {}).then(() => log.replaceChildren()) } }, "New"),
-        el("button", { type: "button", "data-help": "The last ten conversations, kept on this computer. Continue one; Claude remembers what was said.", on: { click: history } }, "History")));
+        el("button", { type: "button", "data-help": "The last ten conversations, kept on this computer. Continue one; Claude remembers what was said.", on: { click: history } }, "History")),
+      ...(others ? [others] : []));
   }
 
   connections();

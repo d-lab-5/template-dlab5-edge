@@ -20,23 +20,30 @@ the one call that wires the layer into a tool. Owned by the edge layer.
     GET  /api/chat/history[/<session>]  the last ten conversations; POST …/resume continues one
     GET|POST /api/chat/proposals        what the chat proposed; POST …/<id>/confirm|dismiss
 
-Started for the network (<PREFIX>_EDGE_LAN=1 at install, or --host 0.0.0.0), the page
-answers other computers too, but the chat and adding, choosing or forgetting
-a connection stay on this computer: see HERE_ONLY.
+Started for the network (<tool>-start-lan, or --host 0.0.0.0), the page
+answers other computers too. Adding, choosing or forgetting a connection
+stays on this computer (HERE_ONLY); the chat needs its key there (CHAT_KEY).
+
+    GET  /api/chat/key        here only: the key, and the links that carry it
+    POST /api/chat/key        {key}: another computer gives it once, gets a cookie
+    POST /api/chat/key/new    here only: a new key; every other computer is out
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import ipaddress
 import json
 import os
+import secrets
 import tempfile
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from flask import Blueprint, Flask, Response, abort, jsonify, request
+from flask import Blueprint, Flask, Response, abort, current_app, jsonify, request
 
 from . import chat as chat_mod
 from . import cloud, firststart, settings, sync
@@ -50,12 +57,24 @@ LINK: Dict[str, Any] = {"state": "idle"}
 KEEP_FRESH_EVERY_S = 12 * 3600
 
 # What a browser on another computer may not do, when the edge is started for
-# the network. The chat is a Claude session of this computer's user, with
-# their conversations and their permission to confirm what it proposes; a
-# connection holds this edge's device token. Neither is for everyone on the
-# network. Shutdown, restart and update are refused by the core already.
-HERE_ONLY = ("/api/chat", "/api/cloud/link", "/api/cloud/unlink", "/api/cloud/use")
+# the network: a connection holds this edge's device token. Shutdown, restart
+# and update are refused by the core already.
+HERE_ONLY = ("/api/cloud/link", "/api/cloud/unlink", "/api/cloud/use")
 NOT_HERE = "only on the computer the edge runs on: open the edge there"
+
+# The chat is a Claude session of this computer's user: their conversations,
+# their subscription, their confirm button. Claude has no shell, files or web
+# in it, only this edge's tools, and every change waits for a click; still,
+# not everyone on the network gets it. Another computer gives the CHAT KEY
+# once (shown on this computer's page, never printed to the log) and keeps a
+# cookie derived from it; a new key signs every other computer out. What the
+# MCP server posts (new proposals) and the key itself stay here.
+CHAT = "/api/chat"
+CHAT_HERE_ONLY = {("GET", "/api/chat/key"), ("POST", "/api/chat/key/new"),
+                  ("GET", "/api/chat/proposals"), ("POST", "/api/chat/proposals")}   # the MCP server's
+CHAT_OPEN = {("GET", "/api/chat"), ("POST", "/api/chat/key")}                        # say why / give the key
+CHAT_COOKIE = "edge-chat"
+CHAT_COOKIE_DAYS = 30
 
 
 def here() -> bool:
@@ -64,6 +83,55 @@ def here() -> bool:
         return ipaddress.ip_address(request.remote_addr or "").is_loopback
     except ValueError:
         return False
+
+
+def on_network() -> bool:
+    """Started for the network: the core lets other names through then."""
+    return bool(current_app.config.get("CORE_EXTRA_HOSTS"))
+
+
+def chat_on_network() -> bool:
+    """settings.CHAT_ON_NETWORK = False keeps the chat on this computer."""
+    return on_network() and getattr(settings, "CHAT_ON_NETWORK", True) is not False
+
+
+def _key_file() -> Path:
+    return kn.data_dir() / "chat-key"
+
+
+def chat_key(new: bool = False) -> str:
+    """The chat key, made on first use, owner-only like the other state."""
+    path = _key_file()
+    if not new:
+        try:
+            key = path.read_text(encoding="utf-8").strip()
+            if len(key) >= 20:
+                return key
+        except OSError:
+            pass
+    key = secrets.token_urlsafe(18)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(key)
+    os.replace(tmp, path)
+    return key
+
+
+def _cookie_for(key: str) -> str:
+    # not the key itself: a cookie read off a machine does not give the key away
+    return hmac.new(key.encode(), b"edge chat", hashlib.sha256).hexdigest()
+
+
+def chat_allowed() -> bool:
+    """This computer always; another one with the cookie, when allowed at all."""
+    if here():
+        return True
+    if not chat_on_network():
+        return False
+    got = request.cookies.get(CHAT_COOKIE, "")
+    return bool(got) and hmac.compare_digest(got, _cookie_for(chat_key()))
 
 
 def body() -> Dict[str, Any]:
@@ -245,10 +313,14 @@ def chat_selection() -> Optional[str]:
 
 @bp.get("/api/chat")
 def chat_status():
-    if not here():
+    if not chat_allowed():
+        if chat_on_network():
+            return jsonify({"available": False, "here": False, "needs_key": True,
+                            "why": "The chat needs its key: on the computer the edge runs on, the chat panel shows it."})
         return jsonify({"available": False, "here": False, "why": f"The chat is {NOT_HERE}."})
     proposals, talk = chat_state()
-    return jsonify({**chat_mod.available(), "session": bool(talk.session), "answering": talk.proc is not None,
+    return jsonify({**chat_mod.available(), "here": here(), "network": chat_on_network() and here(),
+                    "session": bool(talk.session), "answering": talk.proc is not None,
                     "waiting": [p for p in proposals.items.values() if p["state"] == "waiting"]})
 
 
@@ -280,6 +352,43 @@ def chat_ask():
                     pass
             yield json.dumps(ev) + "\n"
     return Response(stream(), mimetype="application/x-ndjson", headers={"Cache-Control": "no-store"})
+
+
+@bp.get("/api/chat/key")
+def chat_key_show():
+    """Here only: the key, and links to this edge that carry it in the
+    fragment (#chat-key=…), which a browser never sends to a server."""
+    if not chat_on_network():
+        return jsonify({"network": False})
+    key = chat_key()
+    port = request.host.rsplit(":", 1)[-1] if ":" in request.host else "80"
+    names = sorted(current_app.config.get("CORE_EXTRA_HOSTS") or (),
+                   key=lambda n: (not n[0].isdigit(), n.startswith("127."), n))
+    links = [f"http://{n}:{port}/#chat-key={key}" for n in names if not n.startswith("127.")]
+    return jsonify({"network": True, "key": key, "links": links[:3]})
+
+
+@bp.post("/api/chat/key")
+def chat_key_give():
+    """Another computer gives the key once and keeps a cookie for a month."""
+    if not chat_on_network():
+        abort(403, f"the chat is {NOT_HERE}")
+    given = str(body().get("key") or "").strip()
+    key = chat_key()
+    if not given or not hmac.compare_digest(given, key):
+        time.sleep(1)                              # no guessing at speed
+        abort(403, "that is not this edge's chat key")
+    resp = jsonify({"ok": True})
+    resp.set_cookie(CHAT_COOKIE, _cookie_for(key), max_age=CHAT_COOKIE_DAYS * 86400,
+                    httponly=True, samesite="Strict", path="/")
+    return resp
+
+
+@bp.post("/api/chat/key/new")
+def chat_key_new():
+    """Here only: a new key. Every other computer has to give it again."""
+    chat_key(new=True)
+    return chat_key_show()
 
 
 @bp.post("/api/chat/new")
@@ -346,6 +455,10 @@ def chat_decide(pid: str, what: str):
     if what not in ("confirm", "dismiss"):
         abort(404)
     proposals = chat_state()[0]
+    waiting = proposals.items.get(pid)
+    if what == "confirm" and waiting and not here() \
+            and any(waiting["path"] == h or waiting["path"].startswith(h + "/") for h in HERE_ONLY):
+        abort(403, f"confirm this one on the computer the edge runs on: it is {NOT_HERE}")
     try:
         p = proposals.take(pid, "confirmed" if what == "confirm" else "dismissed")
     except KeyError:
@@ -438,9 +551,13 @@ def _guard(app: Flask) -> None:
         name = host.split("]")[0] + "]" if host.startswith("[") else host.rsplit(":", 1)[0]
         if name not in {"127.0.0.1", "localhost", "[::1]"} | extra | set(app.config.get("CORE_EXTRA_HOSTS", ())):
             abort(403, "this server answers to localhost only")
-        if any(request.path == p or request.path.startswith(p + "/") for p in HERE_ONLY) \
-                and not (request.method == "GET" and request.path == "/api/chat") and not here():
-            abort(403, f"this is {NOT_HERE}")
+        under = lambda ps: any(request.path == p or request.path.startswith(p + "/") for p in ps)  # noqa: E731
+        if not here():
+            asked = (request.method, request.path.rstrip("/") or "/")
+            if under(HERE_ONLY) or asked in CHAT_HERE_ONLY:
+                abort(403, f"this is {NOT_HERE}")
+            if under((CHAT,)) and asked not in CHAT_OPEN and not chat_allowed():
+                abort(403, "the chat needs its key: the chat panel on the computer the edge runs on shows it")
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             origin = request.headers.get("Origin")
             if origin and origin.rstrip("/").lower() != f"{request.scheme}://{host}":

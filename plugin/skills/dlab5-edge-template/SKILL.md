@@ -111,21 +111,31 @@ and built into docs.dlab5.net; the edge cites them as "ADR-00NN in
 
 ## Opening an edge to the network
 
-By default an edge answers this computer only. `<PREFIX>_EDGE_LAN=1` at
-install (both installers), or `--host 0.0.0.0` at start, opens the page to
-other computers on the network; the start lines print the address to use.
-It needs a base with python-tool-template PR #8 (the computer's own names on
-0.0.0.0); before that, every visitor from elsewhere gets 403.
+The installers write two start commands, both through `edge/start.py`:
+`<tool>-start` (this computer only) and `<tool>-start-lan` (this computer and
+its network, `--host 0.0.0.0`). Each stops an edge already running on its
+port, so switching is running the other one; a restart from the page keeps
+the mode. `<PREFIX>_EDGE_LAN=1` at install starts the LAN one. It needs a
+base with python-tool-template #8 (the computer's own names on 0.0.0.0).
 
-What a visitor from elsewhere can never do is in `routes.HERE_ONLY`: the
-**chat** (a Claude session of this computer's user, with their history and
-their confirm button) and **adding, choosing or forgetting a connection**
-(the device token). Shutdown, restart and update are refused by the core.
-`GET /api/chat` answers `available: false` with the reason, so the panel says
-so instead of failing. A new route that runs Claude or touches a token goes
-into `HERE_ONLY`; the route test covers each one. The installers stop and
-start a running edge rather than restart it, because a restart keeps the old
-options.
+From another computer:
+- **The page, the knowledge and syncing** work as on this computer.
+- **The chat needs its key.** This computer's chat panel shows it under
+  *Other computers*, with links that carry it in the fragment
+  (`#chat-key=…`, never sent to a server). Given once, the browser keeps a
+  cookie derived from the key for 30 days; *New key* signs every other
+  computer out. The key is in `<data>/chat-key` (0600) and never printed to
+  the log. `settings.CHAT_ON_NETWORK = False` keeps the chat here only.
+  Claude has the same tools as here: this edge's MCP tools, no shell, files
+  or web, and changes wait for a click.
+- **Stays here:** adding, choosing or forgetting a connection
+  (`routes.HERE_ONLY`), confirming a proposal that does one of those, the
+  key itself, and the MCP server's proposal routes (`CHAT_HERE_ONLY`).
+  Shutdown, restart and update are refused by the core.
+
+The network is plain HTTP: the cookie crosses it in the clear, which is
+fine at home and wrong on a shared network. A new route that runs Claude
+goes under `/api/chat`; one that touches a token goes into `HERE_ONLY`.
 
 ## Releasing to the cloud
 
