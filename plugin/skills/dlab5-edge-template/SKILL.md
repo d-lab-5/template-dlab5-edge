@@ -62,7 +62,13 @@ one failed. The last ten conversations can be read again and continued
 folder for `--resume`). A tool whose page has a selection sets
 `CHAT_SELECTION` (and optionally `CHAT_SELECTION_NOTICE`) in settings.py and
 gives Claude its own tool that reads the items; `CHAT_TITLE_SKIP` keeps
-page-written prompts out of history titles. Those three are optional: an
+page-written prompts out of history titles.
+
+**The panels use the tool's core** (python-tool-template core.js, v0.5 and
+later): every button carries `data-help`, shown above it after a delay, and
+what the person starts (linking, confirming, continuing a conversation)
+shows the core's loading card; polling and the streaming answer stay quiet.
+Give the tool's own buttons `data-help` too, never `title=`. Those three are optional: an
 edge whose settings.py predates them works unchanged.
 
 Copy the cloud's `packages/ontology` (tbox/, shapes/) into `edge/ontology/`

@@ -60,7 +60,12 @@ def test_knowledge_lists_the_local_a_boxes(client):
 
 
 def test_the_panels_are_served(client):
-    assert client.get("/edge-static/edge.js").status_code == 200
+    js = client.get("/edge-static/edge.js")
+    assert js.status_code == 200
+    # every button says what it does, above it (core.js shows data-help), and
+    # what the person starts shows the core's loading card
+    text = js.get_data(as_text=True)
+    assert text.count('"data-help"') >= 10 and "core.busy" in text
 
 
 def test_a_confirmed_proposal_that_fails_says_why_and_the_chat_hears_it(client):

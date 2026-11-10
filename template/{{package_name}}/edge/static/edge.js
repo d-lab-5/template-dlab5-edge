@@ -17,7 +17,15 @@
     for (const k of kids.flat()) if (k != null && k !== false) e.append(k.nodeType ? k : String(k));
     return e;
   };
+  // the core's loading card (python-tool-template core.js) for what the
+  // person starts; reading and polling stay quiet. An older core has none.
+  const busy = (d) => { if (window.core && core.busy) core.busy(d); };
   async function api(method, path, body) {
+    if (method === "GET") return call(method, path, body);
+    busy(1);
+    try { return await call(method, path, body); } finally { busy(-1); }
+  }
+  async function call(method, path, body) {
     const r = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : {},
                                   body: body ? JSON.stringify(body) : undefined });
     const data = await r.json().catch(() => ({}));
@@ -41,8 +49,8 @@
       c.no_tenant ? el("span", { class: "edge-tag err" }, "no tenant: link again") : null,
       c.rotate_error ? el("span", { class: "edge-tag err", title: c.rotate_error }, "token renewal failed") : null,
       c.token_expires ? el("span", { class: "edge-tag" }, `token until ${c.token_expires.slice(0, 10)}`) : null,
-      name !== st.profile ? el("button", { type: "button", on: { click: () => api("POST", "/api/cloud/use", { profile: name }).then(connections) } }, "use") : null,
-      el("button", { type: "button", on: { click: () => { if (confirm(`Forget ${name} on this edge?`)) api("POST", "/api/cloud/unlink", { profile: name }).then(connections); } } }, "unlink")));
+      name !== st.profile ? el("button", { type: "button", "data-help": "Make this the connection the edge syncs with and the chat talks to.", on: { click: () => api("POST", "/api/cloud/use", { profile: name }).then(connections) } }, "use") : null,
+      el("button", { type: "button", "data-help": "Forget this connection's token on this edge. The cloud keeps its data; link again to come back.", on: { click: () => { if (confirm(`Forget ${name} on this edge?`)) api("POST", "/api/cloud/unlink", { profile: name }).then(connections); } } }, "unlink")));
     const link = st.link || {};
     const form = el("form", { class: "edge-link", on: { submit: (ev) => {
       ev.preventDefault();
@@ -52,7 +60,7 @@
     } } },
       el("input", { name: "cloud", placeholder: "edge API address (the cloud's About page)", required: true, size: 48 }),
       el("input", { name: "profile", placeholder: "name, e.g. prod", pattern: "[a-z][a-z0-9-]{0,31}", size: 10 }),
-      el("button", { type: "submit" }, "+ Add connection"));
+      el("button", { type: "submit", "data-help": "Show a code that an admin of your tenant approves on the cloud's /link page. No password is typed here." }, "+ Add connection"));
     const pairing = link.state === "waiting" ? el("p", { class: "edge-pairing" },
       "Ask an admin of your tenant to approve code ", el("b", {}, link.user_code || "…"), " on ",
       el("a", { href: link.url, target: "_blank", rel: "noopener noreferrer" }, host(link.url)), ".")
@@ -82,8 +90,8 @@
     };
     const proposal = (p) => {
       const row = el("p", { class: "edge-chat__proposal" }, p.summary || p.id, " ",
-        el("button", { type: "button", on: { click: () => decide(p.id, "confirm", row) } }, "Confirm"), " ",
-        el("button", { type: "button", on: { click: () => decide(p.id, "dismiss", row) } }, "Dismiss"));
+        el("button", { type: "button", "data-help": "Run this one change now, on this edge.", on: { click: () => decide(p.id, "confirm", row) } }, "Confirm"), " ",
+        el("button", { type: "button", "data-help": "Drop it. Nothing changes, and the chat hears it was dismissed.", on: { click: () => decide(p.id, "dismiss", row) } }, "Dismiss"));
       row.dataset.summary = p.summary || p.id;
       log.append(row);
     };
@@ -131,17 +139,17 @@
         el("b", {}, i.title || "(untitled)"), " ",
         el("span", { class: "edge-muted" }, `${when(i.updated)} · ${i.said || 0} messages`), " ",
         i.session === h.current ? el("span", { class: "edge-tag" }, "now")
-          : el("button", { type: "button", on: { click: (ev) => go(i.session, ev.target) } }, "Continue"))))
+          : el("button", { type: "button", "data-help": "Go on with this conversation where it stopped.", on: { click: (ev) => go(i.session, ev.target) } }, "Continue"))))
         : el("p", { class: "edge-muted" }, "No conversations yet."));
       past.hidden = false;
     }
     input.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); send(); } });
     chatBox.replaceChildren(el("h2", {}, "Chat"), past, log,
       el("form", { class: "edge-chat__ask", on: { submit: (ev) => { ev.preventDefault(); send(); } } }, input,
-        el("button", { type: "submit" }, "Ask"),
-        el("button", { type: "button", on: { click: () => api("POST", "/api/chat/stop", {}) } }, "Stop"),
-        el("button", { type: "button", on: { click: () => api("POST", "/api/chat/new", {}).then(() => log.replaceChildren()) } }, "New"),
-        el("button", { type: "button", on: { click: history } }, "History")));
+        el("button", { type: "submit", "data-help": "Send it to Claude on this computer. Enter sends too; Shift+Enter starts a new line." }, "Ask"),
+        el("button", { type: "button", "data-help": "Stop the answer being written.", on: { click: () => api("POST", "/api/chat/stop", {}) } }, "Stop"),
+        el("button", { type: "button", "data-help": "Start a new conversation. The last one stays in History.", on: { click: () => api("POST", "/api/chat/new", {}).then(() => log.replaceChildren()) } }, "New"),
+        el("button", { type: "button", "data-help": "The last ten conversations, kept on this computer. Continue one; Claude remembers what was said.", on: { click: history } }, "History")));
   }
 
   connections();
