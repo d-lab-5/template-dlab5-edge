@@ -1,0 +1,13 @@
+@echo off
+:: Start {{ tool_name }} for this computer AND its network: other computers open
+:: the page by this computer's name or address (printed at start). The chat
+:: needs its key there (this computer's chat panel shows it); adding, choosing
+:: or forgetting a connection stays here. Like run.cmd, it replaces an
+:: instance already holding the port, so switching back is run.cmd.
+::
+::   run-lan.cmd              on 0.0.0.0:{{ port }}
+::   run-lan.cmd -Port 9000   any run.cmd option works
+::
+:: Owned by the edge layer (template-dlab5-edge).
+call "%~dp0run.cmd" -Bind 0.0.0.0 %*
+exit /b %errorlevel%

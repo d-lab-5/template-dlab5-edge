@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Start {{ tool_name }} for this computer AND its network: other computers open
+# the page by this computer's name or address (printed at start). The chat
+# needs its key there (this computer's chat panel shows it); adding, choosing
+# or forgetting a connection stays here. Like ./run.sh, it replaces an
+# instance already holding the port, so switching back is ./run.sh.
+#
+#   ./run-lan.sh               on 0.0.0.0:{{ port }}
+#   ./run-lan.sh --port 9000   any ./run.sh option works
+#
+# Owned by the edge layer (template-dlab5-edge): `copier update -a
+# .copier-answers.edge.yml` rewrites this file.
+exec "$(dirname "$0")/run.sh" --host 0.0.0.0 "$@"

@@ -111,6 +111,9 @@ and built into docs.dlab5.net; the edge cites them as "ADR-00NN in
 
 ## Opening an edge to the network
 
+In a checkout, `./run.sh` is this computer only and `./run-lan.sh` (Windows
+`run-lan.cmd`) is this computer and its network; both replace an instance
+already on the port. The layer owns `run-lan.*`; the base owns `run.*`.
 The installers write two start commands, both through `edge/start.py`:
 `<tool>-start` (this computer only) and `<tool>-start-lan` (this computer and
 its network, `--host 0.0.0.0`). Each stops an edge already running on its

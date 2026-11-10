@@ -14,7 +14,8 @@ copier copy gh:ERP-LAB-5/python-tool-template my-edge          # the base
 cd my-edge && git init -b main && git add -A && git commit -m "Start my-edge"
 copier copy --trust --data-file .copier-answers.yml \
             -a .copier-answers.edge.yml gh:d-lab-5/template-dlab5-edge .
-./test.sh && ./run.sh
+./test.sh && ./run.sh     # this computer only
+./run-lan.sh               # this computer and its network (the chat needs its key there)
 ```
 
 ## What the layer adds
