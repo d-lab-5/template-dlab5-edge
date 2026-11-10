@@ -36,6 +36,22 @@ def test_a_write_from_another_site_is_refused(client):
     assert r.status_code == 403
 
 
+def test_another_computer_sees_the_page_but_not_the_chat_or_the_connections(client):
+    # started for the network: a browser elsewhere on it gets the page and the
+    # knowledge, while the chat and the device token stay on this computer
+    away = {"REMOTE_ADDR": "192.168.1.50"}
+    assert client.get("/api/knowledge", environ_base=away).status_code == 200
+    cloud = client.get("/api/cloud", environ_base=away).get_json()
+    assert cloud["here"] is False and client.get("/api/cloud").get_json()["here"] is True
+    chat = client.get("/api/chat", environ_base=away).get_json()
+    assert chat["available"] is False and "only on the computer" in chat["why"]
+    for method, path in [("POST", "/api/chat"), ("GET", "/api/chat/history"), ("GET", "/api/chat/proposals"),
+                         ("POST", "/api/chat/proposals/p000000-1/confirm"), ("POST", "/api/cloud/link"),
+                         ("POST", "/api/cloud/unlink"), ("POST", "/api/cloud/use")]:
+        assert client.open(path, method=method, json={}, environ_base=away).status_code == 403, path
+    assert client.get("/api/chat/history").status_code == 200
+
+
 def test_nobody_may_frame_the_page(client):
     r = client.get("/api/cloud")
     assert r.headers["X-Frame-Options"] == "DENY"

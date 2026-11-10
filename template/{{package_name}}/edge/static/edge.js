@@ -49,8 +49,8 @@
       c.no_tenant ? el("span", { class: "edge-tag err" }, "no tenant: link again") : null,
       c.rotate_error ? el("span", { class: "edge-tag err", title: c.rotate_error }, "token renewal failed") : null,
       c.token_expires ? el("span", { class: "edge-tag" }, `token until ${c.token_expires.slice(0, 10)}`) : null,
-      name !== st.profile ? el("button", { type: "button", "data-help": "Make this the connection the edge syncs with and the chat talks to.", on: { click: () => api("POST", "/api/cloud/use", { profile: name }).then(connections) } }, "use") : null,
-      el("button", { type: "button", "data-help": "Forget this connection's token on this edge. The cloud keeps its data; link again to come back.", on: { click: () => { if (confirm(`Forget ${name} on this edge?`)) api("POST", "/api/cloud/unlink", { profile: name }).then(connections); } } }, "unlink")));
+      st.here && name !== st.profile ? el("button", { type: "button", "data-help": "Make this the connection the edge syncs with and the chat talks to.", on: { click: () => api("POST", "/api/cloud/use", { profile: name }).then(connections) } }, "use") : null,
+      !st.here ? null : el("button", { type: "button", "data-help": "Forget this connection's token on this edge. The cloud keeps its data; link again to come back.", on: { click: () => { if (confirm(`Forget ${name} on this edge?`)) api("POST", "/api/cloud/unlink", { profile: name }).then(connections); } } }, "unlink")));
     const link = st.link || {};
     const form = el("form", { class: "edge-link", on: { submit: (ev) => {
       ev.preventDefault();
@@ -65,7 +65,9 @@
       "Ask an admin of your tenant to approve code ", el("b", {}, link.user_code || "…"), " on ",
       el("a", { href: link.url, target: "_blank", rel: "noopener noreferrer" }, host(link.url)), ".")
       : link.state === "failed" ? el("p", { class: "err" }, link.error) : null;
-    box.replaceChildren(el("h2", {}, "Connections"), el("ul", { class: "edge-conns" }, rows.length ? rows : el("li", {}, "Not linked to a cloud yet.")), pairing, form);
+    const away = el("p", { class: "edge-muted" }, "Connections are added, chosen and forgotten on the computer the edge runs on.");
+    box.replaceChildren(el("h2", {}, "Connections"), el("ul", { class: "edge-conns" }, rows.length ? rows : el("li", {}, "Not linked to a cloud yet.")),
+      ...(st.here === false ? [away] : [pairing, form]));
     clearTimeout(poll);
     if (link.state === "waiting") poll = setTimeout(connections, 3000);
   }

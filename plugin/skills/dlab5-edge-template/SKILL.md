@@ -109,6 +109,24 @@ and built into docs.dlab5.net; the edge cites them as "ADR-00NN in
 - On a ROS 2 workstation, run tests with `./test.sh` (it unsets PYTHONPATH),
   never bare pytest.
 
+## Opening an edge to the network
+
+By default an edge answers this computer only. `<PREFIX>_EDGE_LAN=1` at
+install (both installers), or `--host 0.0.0.0` at start, opens the page to
+other computers on the network; the start lines print the address to use.
+It needs a base with python-tool-template PR #8 (the computer's own names on
+0.0.0.0); before that, every visitor from elsewhere gets 403.
+
+What a visitor from elsewhere can never do is in `routes.HERE_ONLY`: the
+**chat** (a Claude session of this computer's user, with their history and
+their confirm button) and **adding, choosing or forgetting a connection**
+(the device token). Shutdown, restart and update are refused by the core.
+`GET /api/chat` answers `available: false` with the reason, so the panel says
+so instead of failing. A new route that runs Claude or touches a token goes
+into `HERE_ONLY`; the route test covers each one. The installers stop and
+start a running edge rather than restart it, because a restart keeps the old
+options.
+
 ## Releasing to the cloud
 
 `scripts/publish-to-cloud.sh ../the-cloud-repo` builds the wheel, fills the
@@ -119,4 +137,5 @@ push the cloud repo. Raise the cloud's `MIN_EDGE_VERSION` only afterwards.
 
 In template-dlab5-edge: `./test.sh` makes a human, iot and robot edge from the
 base and the working tree, runs each tool's tests, starts it, checks the
-guard, and round-trips an update.
+guard, and round-trips an update. `BASE_REF=HEAD` takes the base at a
+commit, for a base change that is not tagged yet.

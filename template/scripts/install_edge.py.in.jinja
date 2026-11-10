@@ -16,6 +16,10 @@ It needs Python 3.10 or newer, nothing else, and does no more than:
      installs the package there (no administrator rights)
   3. writes a start command ({{ tool_name }}-start, or .cmd on Windows) and
      starts the edge on http://127.0.0.1:{{ port }} (this computer only)
+
+{{ env_prefix }}_EDGE_LAN=1 starts it for the network instead, so other computers on
+it can open the page; the chat and the connections stay on this computer.
+Install again without it to go back.
 On its first start the edge fetches what it still lacks; after linking,
 what its {{ tenant_noun }} already knows. Running this again updates the edge.
 
@@ -41,6 +45,9 @@ VERSION = "@VERSION@"
 WHEEL = "@WHEEL@"
 SHA256 = "@SHA256@"
 PORT = int(os.environ.get("{{ env_prefix }}_EDGE_PORT", "{{ port }}"))
+LAN = os.environ.get("{{ env_prefix }}_EDGE_LAN", "").strip().lower() in ("1", "yes", "true")
+HOST_ARGS = ["--host", "0.0.0.0"] if LAN else []
+WHERE = "this computer and its network" if LAN else "this computer only"
 
 
 def say(text=""):
@@ -101,33 +108,38 @@ def main():
 
     if sys.platform == "win32":
         start = home / "{{ tool_name }}-start.cmd"
-        start.write_text(f'@echo off\r\nset PYTHONPATH=\r\nset {{ env_prefix }}_EDGE_HOME={home}\r\n"{py}" -m {{ package_name }} --port {PORT} %*\r\n')
+        start.write_text(f'@echo off\r\nset PYTHONPATH=\r\nset {{ env_prefix }}_EDGE_HOME={home}\r\n"{py}" -m {{ package_name }} --port {PORT} {" ".join(HOST_ARGS)} %*\r\n')
     else:
         bin_dir = Path.home() / ".local" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         start = bin_dir / "{{ tool_name }}-start"
-        start.write_text(f'#!/bin/sh\nunset PYTHONPATH\nexport {{ env_prefix }}_EDGE_HOME="{home}"\nexec "{py}" -m {{ package_name }} --port {PORT} "$@"\n')
+        start.write_text(f'#!/bin/sh\nunset PYTHONPATH\nexport {{ env_prefix }}_EDGE_HOME="{home}"\nexec "{py}" -m {{ package_name }} --port {PORT} {" ".join(HOST_ARGS)} "$@"\n')
         start.chmod(0o755)
 
+    # a running edge is stopped and started with the new command, not
+    # restarted: a restart keeps its old options, and would ignore _EDGE_LAN
     if running():
-        req = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/restart", data=b"{}", method="POST",
+        req = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/shutdown", data=b"{}", method="POST",
                                      headers={"Content-Type": "application/json"})
         try:
             urllib.request.urlopen(req, timeout=5)
         except Exception:
             pass
-        say("  ok the running edge restarts with the new version")
-    else:
-        log = open(home / "edge.log", "ab")
-        kw = {"creationflags": 0x00000008 | 0x00000200} if sys.platform == "win32" else {"start_new_session": True}
-        subprocess.Popen([str(py), "-m", "{{ package_name }}", "--port", str(PORT)],
-                         stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-                         env={**clean, "{{ env_prefix }}_EDGE_HOME": str(home)}, **kw)
-        for _ in range(20):
-            if running():
+        for _ in range(10):
+            if not running():
                 break
             time.sleep(1)
-        say("  ok started")
+        say("  ok the running edge stopped, to start with the new version")
+    log = open(home / "edge.log", "ab")
+    kw = {"creationflags": 0x00000008 | 0x00000200} if sys.platform == "win32" else {"start_new_session": True}
+    subprocess.Popen([str(py), "-m", "{{ package_name }}", "--port", str(PORT), *HOST_ARGS],
+                     stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                     env={**clean, "{{ env_prefix }}_EDGE_HOME": str(home)}, **kw)
+    for _ in range(20):
+        if running():
+            break
+        time.sleep(1)
+    say(f"  ok started ({WHERE})")
     url = f"http://127.0.0.1:{PORT}/"
     if os.environ.get("DISPLAY") or sys.platform in ("win32", "darwin"):
         webbrowser.open(url)
@@ -137,7 +149,9 @@ def main():
     say("  1. Connections: + Add connection, with the edge API address from the cloud's About page")
     say("  2. Let an admin of your {{ tenant_noun }} approve the code on the cloud's /link page")
     say("")
-    say(f"Start it again later with: {start}")
+    say(f"Start it again later with: {start}  ({WHERE})")
+    if LAN:
+        say(f"From another computer: the address the edge prints at start, in {home / 'edge.log'}")
 
 
 if __name__ == "__main__":

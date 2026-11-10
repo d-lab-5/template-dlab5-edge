@@ -19,10 +19,15 @@ the one call that wires the layer into a tool. Owned by the edge layer.
     GET|POST /api/chat …                the chat panel (chat.py): ask, new, stop
     GET  /api/chat/history[/<session>]  the last ten conversations; POST …/resume continues one
     GET|POST /api/chat/proposals        what the chat proposed; POST …/<id>/confirm|dismiss
+
+Started for the network (<PREFIX>_EDGE_LAN=1 at install, or --host 0.0.0.0), the page
+answers other computers too, but the chat and adding, choosing or forgetting
+a connection stay on this computer: see HERE_ONLY.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import tempfile
@@ -43,6 +48,22 @@ bp = Blueprint("edge", __name__, static_folder="static", static_url_path="/edge-
 LINK_LOCK = threading.Lock()
 LINK: Dict[str, Any] = {"state": "idle"}
 KEEP_FRESH_EVERY_S = 12 * 3600
+
+# What a browser on another computer may not do, when the edge is started for
+# the network. The chat is a Claude session of this computer's user, with
+# their conversations and their permission to confirm what it proposes; a
+# connection holds this edge's device token. Neither is for everyone on the
+# network. Shutdown, restart and update are refused by the core already.
+HERE_ONLY = ("/api/chat", "/api/cloud/link", "/api/cloud/unlink", "/api/cloud/use")
+NOT_HERE = "only on the computer the edge runs on: open the edge there"
+
+
+def here() -> bool:
+    """The caller is this computer (loopback), not another one on the network."""
+    try:
+        return ipaddress.ip_address(request.remote_addr or "").is_loopback
+    except ValueError:
+        return False
 
 
 def body() -> Dict[str, Any]:
@@ -66,10 +87,10 @@ def cloud_state():
     with LINK_LOCK:
         link = {k: v for k, v in LINK.items() if k != "pending"}
         pending = LINK.get("pending")
-        if pending:
+        if pending and here():
             link.update(user_code=pending.get("user_code"), url=pending.get("verification_uri_complete"),
                         profile=pending.get("profile"))
-    return jsonify({**cloud.public_state(), "profiles": cloud.profiles(), "link": link})
+    return jsonify({**cloud.public_state(), "profiles": cloud.profiles(), "link": link, "here": here()})
 
 
 def _poll(pending: Dict[str, Any]) -> None:
@@ -224,6 +245,8 @@ def chat_selection() -> Optional[str]:
 
 @bp.get("/api/chat")
 def chat_status():
+    if not here():
+        return jsonify({"available": False, "here": False, "why": f"The chat is {NOT_HERE}."})
     proposals, talk = chat_state()
     return jsonify({**chat_mod.available(), "session": bool(talk.session), "answering": talk.proc is not None,
                     "waiting": [p for p in proposals.items.values() if p["state"] == "waiting"]})
@@ -415,6 +438,9 @@ def _guard(app: Flask) -> None:
         name = host.split("]")[0] + "]" if host.startswith("[") else host.rsplit(":", 1)[0]
         if name not in {"127.0.0.1", "localhost", "[::1]"} | extra | set(app.config.get("CORE_EXTRA_HOSTS", ())):
             abort(403, "this server answers to localhost only")
+        if any(request.path == p or request.path.startswith(p + "/") for p in HERE_ONLY) \
+                and not (request.method == "GET" and request.path == "/api/chat") and not here():
+            abort(403, f"this is {NOT_HERE}")
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             origin = request.headers.get("Origin")
             if origin and origin.rstrip("/").lower() != f"{request.scheme}://{host}":

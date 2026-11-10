@@ -5,6 +5,7 @@
 #   ./test.sh               human, iot and robot
 #   ./test.sh human         one kind
 #   KEEP=1 ./test.sh        leave the made tools behind to inspect
+#   BASE_REF=HEAD ./test.sh the base at a commit rather than its latest tag
 #   BASE=gh:ERP-LAB-5/python-tool-template ./test.sh    another base
 #
 # For each kind:
@@ -40,7 +41,7 @@ for kind in "${KINDS[@]}"; do
   "$COPIER" copy --trust --defaults --quiet \
     --data tool_name="demo-$kind-edge" --data title="Demo $kind edge" --data port=$port \
     --data with_windows=false --data with_plugin=false \
-    "$BASE" "$dst"
+    ${BASE_REF:+--vcs-ref "$BASE_REF"} "$BASE" "$dst"
   (cd "$dst" && git init -q -b main && git add -A && git -c user.email=t@example.com -c user.name=t commit -qm base)
   "$COPIER" copy --trust --defaults --quiet --vcs-ref HEAD \
     --data-file "$dst/.copier-answers.yml" --data edge_kind="$kind" \
