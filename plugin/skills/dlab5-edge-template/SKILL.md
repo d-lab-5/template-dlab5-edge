@@ -109,6 +109,37 @@ and built into docs.dlab5.net; the edge cites them as "ADR-00NN in
 - On a ROS 2 workstation, run tests with `./test.sh` (it unsets PYTHONPATH),
   never bare pytest.
 
+## Opening an edge to the network
+
+In a checkout, `./run.sh` is this computer only and `./run-lan.sh` (Windows
+`run-lan.cmd`) is this computer and its network; both replace an instance
+already on the port. The layer owns `run-lan.*`; the base owns `run.*`.
+The installers write two start commands, both through `edge/start.py`:
+`<tool>-start` (this computer only) and `<tool>-start-lan` (this computer and
+its network, `--host 0.0.0.0`). Each stops an edge already running on its
+port, so switching is running the other one; a restart from the page keeps
+the mode. `<PREFIX>_EDGE_LAN=1` at install starts the LAN one. It needs a
+base with python-tool-template #8 (the computer's own names on 0.0.0.0).
+
+From another computer:
+- **The page, the knowledge and syncing** work as on this computer.
+- **The chat needs its key.** This computer's chat panel shows it under
+  *Other computers*, with links that carry it in the fragment
+  (`#chat-key=…`, never sent to a server). Given once, the browser keeps a
+  cookie derived from the key for 30 days; *New key* signs every other
+  computer out. The key is in `<data>/chat-key` (0600) and never printed to
+  the log. `settings.CHAT_ON_NETWORK = False` keeps the chat here only.
+  Claude has the same tools as here: this edge's MCP tools, no shell, files
+  or web, and changes wait for a click.
+- **Stays here:** adding, choosing or forgetting a connection
+  (`routes.HERE_ONLY`), confirming a proposal that does one of those, the
+  key itself, and the MCP server's proposal routes (`CHAT_HERE_ONLY`).
+  Shutdown, restart and update are refused by the core.
+
+The network is plain HTTP: the cookie crosses it in the clear, which is
+fine at home and wrong on a shared network. A new route that runs Claude
+goes under `/api/chat`; one that touches a token goes into `HERE_ONLY`.
+
 ## Releasing to the cloud
 
 `scripts/publish-to-cloud.sh ../the-cloud-repo` builds the wheel, fills the
@@ -119,4 +150,5 @@ push the cloud repo. Raise the cloud's `MIN_EDGE_VERSION` only afterwards.
 
 In template-dlab5-edge: `./test.sh` makes a human, iot and robot edge from the
 base and the working tree, runs each tool's tests, starts it, checks the
-guard, and round-trips an update.
+guard, and round-trips an update. `BASE_REF=HEAD` takes the base at a
+commit, for a base change that is not tagged yet.

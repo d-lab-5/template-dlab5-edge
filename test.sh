@@ -5,6 +5,7 @@
 #   ./test.sh               human, iot and robot
 #   ./test.sh human         one kind
 #   KEEP=1 ./test.sh        leave the made tools behind to inspect
+#   BASE_REF=HEAD ./test.sh the base at a commit rather than its latest tag
 #   BASE=gh:ERP-LAB-5/python-tool-template ./test.sh    another base
 #
 # For each kind:
@@ -40,7 +41,7 @@ for kind in "${KINDS[@]}"; do
   "$COPIER" copy --trust --defaults --quiet \
     --data tool_name="demo-$kind-edge" --data title="Demo $kind edge" --data port=$port \
     --data with_windows=false --data with_plugin=false \
-    "$BASE" "$dst"
+    ${BASE_REF:+--vcs-ref "$BASE_REF"} "$BASE" "$dst"
   (cd "$dst" && git init -q -b main && git add -A && git -c user.email=t@example.com -c user.name=t commit -qm base)
   "$COPIER" copy --trust --defaults --quiet --vcs-ref HEAD \
     --data-file "$dst/.copier-answers.yml" --data edge_kind="$kind" \
@@ -71,8 +72,13 @@ for kind in "${KINDS[@]}"; do
   curl -fsS "http://127.0.0.1:$port/edge-static/edge.js" >/dev/null
   code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: evil.example:$port" "http://127.0.0.1:$port/api/cloud")
   [ "$code" = 403 ] || { echo "   a foreign Host got $code"; exit 1; }
+  # run-lan.sh takes over from the local one, for this computer and its network
+  (cd "$dst" && ./run-lan.sh --no-update-check >"$WORK/$kind-lan.log" 2>&1 &)
+  for _ in $(seq 1 60); do grep -q "answers to" "$WORK/$kind-lan.log" 2>/dev/null && curl -fsS "http://127.0.0.1:$port/api/health" >/dev/null 2>&1 && break; sleep 1; done
+  grep -q "answers to" "$WORK/$kind-lan.log" || { echo "   run-lan.sh did not start for the network"; cat "$WORK/$kind-lan.log"; exit 1; }
+  curl -fsS "http://127.0.0.1:$port/api/chat" | grep -q '"network": *true' || { echo "   the chat panel does not know it is on the network"; exit 1; }
   (cd "$dst" && ./run.sh --stop >/dev/null 2>&1) || true
-  echo "   runs, answers, refuses a foreign Host, stops"
+  echo "   runs, answers, refuses a foreign Host, takes over for the network, stops"
   port=$((port + 1))
 done
 echo "all good: ${KINDS[*]}"
