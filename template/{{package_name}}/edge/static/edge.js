@@ -43,7 +43,8 @@
     try { st = await api("GET", "/api/cloud"); } catch (e) { box.replaceChildren(el("p", { class: "err" }, e.message)); return; }
     const rows = Object.entries(st.profiles || {}).map(([name, c]) => el("li", { class: `edge-conn${name === st.profile ? " is-current" : ""}` },
       el("span", { class: `edge-dot ${c.linked ? "ok" : "off"}`, title: c.linked ? "linked" : "not linked" }, "●"), " ",
-      el("b", {}, host(c.site) || name), " ",
+      c.site ? el("a", { href: c.site, target: "_blank", rel: "noopener noreferrer", class: "edge-site", title: `Open ${host(c.site)}` }, el("b", {}, host(c.site)))
+             : el("b", {}, name), " ",
       el("span", { class: "edge-tag" }, name + (name === st.profile ? " · current" : "")),
       c.tenant ? el("span", { class: "edge-tag" }, `${c.tenant.name} · ${c.spaces.length} space${c.spaces.length === 1 ? "" : "s"}`) : null,
       c.no_tenant ? el("span", { class: "edge-tag err" }, "no tenant: link again") : null,
@@ -67,7 +68,8 @@
       : link.state === "failed" ? el("p", { class: "err" }, link.error) : null;
     const away = el("p", { class: "edge-muted" }, "Connections are added, chosen and forgotten on the computer the edge runs on.");
     box.replaceChildren(el("h2", {}, "Connections"), el("ul", { class: "edge-conns" }, rows.length ? rows : el("li", {}, "Not linked to a cloud yet.")),
-      ...(st.here === false ? [away] : [pairing, form]));
+      // replaceChildren prints a null as "null": leave a missing pairing line out
+      ...(st.here === false ? [away] : [pairing, form]).filter(Boolean));
     clearTimeout(poll);
     if (link.state === "waiting") poll = setTimeout(connections, 3000);
   }
