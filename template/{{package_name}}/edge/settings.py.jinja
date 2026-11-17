@@ -85,6 +85,11 @@ the {tenant}'s; use them only to answer.""".format(
 # in the history (the person's first own words are).
 CHAT_TITLE_SKIP: List[str] = []
 
+# Started for the network (<tool>-start-lan), another computer may use the
+# chat once it gives the chat key, which this computer's chat panel shows.
+# False keeps the chat on this computer only.
+CHAT_ON_NETWORK = True
+
 # -- first start ---------------------------------------------------------------
 
 # Steps a new edge runs once (at start, and again after linking) until each

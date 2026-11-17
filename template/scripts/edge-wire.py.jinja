@@ -88,6 +88,10 @@ def page(text: str):
     assets = ('<link rel="stylesheet" href="/edge-static/edge.css">\n'
               '<script src="/edge-static/edge.js" defer></script>\n')
     text = text.replace("</main>", panels + "</main>", 1)
+    # a page that extends core/_base.html: inside its scripts block, because
+    # Jinja drops anything a child template has outside a block
+    if "{% raw %}{% block scripts %}{% endraw %}" in text:
+        return text.replace("{% raw %}{% block scripts %}{% endraw %}", "{% raw %}{% block scripts %}{% endraw %}\n" + assets.rstrip("\n"), 1)
     return text.replace("</body>", assets + "</body>", 1) if "</body>" in text else text + assets
 
 

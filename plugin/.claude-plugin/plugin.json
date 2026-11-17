@@ -1,6 +1,6 @@
 {
   "name": "dlab5-edge-template",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "description": "The edge template's own skill: making a D-LAB-5 edge (human, IoT or robot) and working in one.",
   "author": {
     "name": "D-LAB-5"

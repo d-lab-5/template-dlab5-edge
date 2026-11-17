@@ -68,6 +68,10 @@ with_mcp:
 with_workspace:
   type: bool
   default: true
+with_windows:
+  type: bool
+  default: true
+  help: The base's answer (run.cmd); the layer adds run-lan.cmd beside it.
 
 # -- the edge -----------------------------------------------------------------
 
