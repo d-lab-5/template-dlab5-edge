@@ -106,6 +106,21 @@ and built into docs.dlab5.net; the edge cites them as "ADR-00NN in
 - **`core/` fixes belong upstream**: the localhost-only guard (DNS rebinding)
   was first made in a tool's core/ and would have been lost on update; the
   layer now installs it itself, and python-tool-template got a PR.
+- **An edge looks like its cloud, not like the edge it was copied from.**
+  Maker-5's edge took digitalhome-pro-edge's green and IBM Plex and its
+  cloud kept the template's slate and sky blue: one product, two looks.
+  Redefine the core tokens in the tool's `static/style.css` with the
+  cloud's `packages/site/src/styles/tokens.css` values (light and dark, the
+  same font), and match the icon, `manifest.webmanifest` and the
+  `theme-color` meta. Both start in the device's theme until the person
+  chooses (core.js on the edge, the pre-paint script in the cloud's
+  `gatsby-ssr.tsx`). The brand pairs with the cloud's: `<Product> edge`
+  beside the cloud's domain.
+- **`TENANT_NOUN` and `SPACE_NOUN` in settings.py are the cloud's words.**
+  Change them together with the cloud's `packages/i18n`, and the edge's own
+  page texts with them (Maker-5: organisation and workspace; the edge's
+  side list says "Workspaces"). Routes, MCP tool names and their
+  parameters keep their old names, so clients keep working.
 - On a ROS 2 workstation, run tests with `./test.sh` (it unsets PYTHONPATH),
   never bare pytest.
 
