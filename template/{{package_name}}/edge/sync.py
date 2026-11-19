@@ -258,9 +258,23 @@ def listing(kb: kn.KnowledgeBase, profile: Optional[str] = None) -> List[Dict[st
     is cached): each with the local graph it is or will be, and the graphs
     whose space is gone from the cloud, marked so."""
     name = profile or cloud.active_profile()
-    known = SpaceMap(kb, name).load()
+    m = SpaceMap(kb, name)
+    known = m.load()
     by_id = {v: g for g, v in known.items()}
     spaces = cloud.tenant(name).get("spaces") or []
+    # a space seen for the first time keeps the graph it is given now, so a
+    # rename before its first sync does not make it a second graph
+    fresh = {}
+    for s in spaces:
+        sid = s.get("id")
+        if sid and sid not in by_id:
+            g = cloud.space_slug(s.get("name"))
+            if g not in known and g not in fresh:
+                fresh[g] = sid
+                by_id[sid] = g
+    if fresh:
+        m.save({**known, **fresh})
+        known = {**known, **fresh}
     out = [{"graph": by_id.get(s.get("id")) or cloud.space_slug(s.get("name")), "id": s.get("id"),
             "name": s.get("name"), "kind": s.get("kind"), "gone": False} for s in spaces]
     ids = {s.get("id") for s in spaces}
