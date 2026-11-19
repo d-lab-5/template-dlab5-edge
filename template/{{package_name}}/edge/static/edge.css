@@ -21,3 +21,4 @@
 .edge-env-pick { width: 100%; font: inherit; padding: .3rem .4rem; }
 .edge-env-link { font: inherit; font-size: .85em; }
 .edge-env-code b { letter-spacing: .08em; }
+.edge-copy { font: inherit; font-size: .8em; padding: .05rem .45rem; margin: 0 .15rem; cursor: pointer; }

@@ -35,6 +35,28 @@
     return data;
   }
   const host = (u) => { try { return new URL(u).host; } catch { return u || ""; } };
+  // Copy a pairing code. The Clipboard API needs a secure page (localhost is
+  // one); opened from another computer over plain http, fall back to a
+  // selection and the browser's copy command.
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* below */ }
+    const ta = el("textarea", { readonly: true, style: "position:fixed;opacity:0" });
+    ta.value = text;
+    document.body.append(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch { ok = false; }
+    ta.remove();
+    return ok;
+  }
+  const copyButton = (code) => el("button", { type: "button", class: "edge-copy", "aria-label": `copy ${code}`,
+    "data-help": "Copy the code, to paste it on the cloud's /link page.",
+    on: { click: async (ev) => {
+      const b = ev.currentTarget;
+      const ok = await copyText(code);
+      b.textContent = ok ? "copied" : "select and copy";
+      setTimeout(() => { b.textContent = "copy"; }, 1600);
+    } } }, "copy");
 
   // ------------------------------------------------------------ environment --
   // prod, stage …: each its own folder and its own cloud. Switching tells the
@@ -58,7 +80,8 @@
           `link ${cur.name}`)
       : null;
     const pairing = st.link && st.link.state === "waiting" && st.link.profile === cur.name
-      ? el("small", { class: "edge-env-code" }, "code ", el("b", {}, st.link.user_code || "…"))
+      ? el("small", { class: "edge-env-code" }, "code ", el("b", {}, st.link.user_code || "…"), " ",
+          st.link.user_code ? copyButton(st.link.user_code) : null)
       : null;
     envBox.replaceChildren(el("label", { class: "edge-env" }, pick), ...[linkIt, pairing].filter(Boolean));
   }
@@ -99,7 +122,8 @@
       el("input", { name: "profile", placeholder: "name, e.g. prod", pattern: "[a-z][a-z0-9-]{0,31}", size: 10 }),
       el("button", { type: "submit", "data-help": "Show a code that an admin of your tenant approves on the cloud's /link page. No password is typed here." }, "+ Add connection"));
     const pairing = link.state === "waiting" ? el("p", { class: "edge-pairing" },
-      "Ask an admin of your tenant to approve code ", el("b", {}, link.user_code || "…"), " on ",
+      "Ask an admin of your tenant to approve code ", el("b", {}, link.user_code || "…"), " ",
+      link.user_code ? copyButton(link.user_code) : null, " on ",
       el("a", { href: link.url, target: "_blank", rel: "noopener noreferrer" }, host(link.url)), ".")
       : link.state === "failed" ? el("p", { class: "err" }, link.error) : null;
     const away = el("p", { class: "edge-muted" }, "Connections are added, chosen and forgotten on the computer the edge runs on.");
