@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Where stage and prod meet (settings.SYNC_SCOPE): one merged copy, or a
+folder and a sync per connection; spaces found by id once known, so a rename
+in the cloud keeps the same local graph; a cloud's site is enough to link."""
+
+from __future__ import annotations
+
+import io
+import json
+
+import pytest
+
+from {{ package_name }}.edge import cloud, settings, sync
+from {{ package_name }}.edge import knowledge as kn
+
+ENVS = {"prod": "https://example.org", "stage": "https://stage.example.org"}
+
+
+@pytest.fixture
+def edge(tmp_path, monkeypatch):
+    monkeypatch.setenv("{{ env_prefix }}_EDGE_STATE", str(tmp_path / "cloud.json"))
+    monkeypatch.setenv("{{ env_prefix }}_EDGE_DATA", str(tmp_path / "data"))
+    monkeypatch.setattr(cloud, "PROFILE", None)
+    return tmp_path
+
+
+def per_connection(monkeypatch):
+    monkeypatch.setattr(settings, "SYNC_SCOPE", "per-connection", raising=False)
+    monkeypatch.setattr(settings, "ENVIRONMENTS", dict(ENVS), raising=False)
+
+
+def test_merged_is_one_folder(edge):
+    assert not cloud.per_connection()
+    assert kn.scope_dir() == kn.data_dir()
+
+
+def test_per_connection_gives_each_environment_its_folder(edge, monkeypatch):
+    per_connection(monkeypatch)
+    assert cloud.active_profile() == "prod", "the first environment until another is chosen"
+    assert kn.scope_dir() == kn.data_dir() / "prod"
+    assert kn.KnowledgeBase().dir == kn.data_dir() / "prod" / "abox"
+    cloud.use_profile("stage")                      # not linked yet: still chosen, its folder empty
+    assert kn.scope_dir() == kn.data_dir() / "stage"
+    envs = {e["name"]: e for e in cloud.environments()}
+    assert envs["stage"]["current"] and not envs["stage"]["linked"] and envs["stage"]["site"] == ENVS["stage"]
+    with pytest.raises(cloud.CloudError):
+        cloud.use_profile("nowhere")
+
+
+def test_per_connection_syncs_with_the_current_one_alone(edge, monkeypatch):
+    seen = []
+    monkeypatch.setattr(cloud, "linked_profiles", lambda: ["prod", "stage"])
+    monkeypatch.setattr(sync, "sync", lambda kb, g, name, resolve=None: seen.append(name) or {"status": "ok"})
+    sync.sync_everywhere(kn.KnowledgeBase(), "shared")
+    assert seen == ["prod", "stage"], "merged: every connection in turn"
+    seen.clear()
+    per_connection(monkeypatch)
+    sync.sync_everywhere(kn.KnowledgeBase(), "shared")
+    assert seen == ["prod"]
+
+
+def test_a_space_is_found_by_id_once_known(edge, monkeypatch):
+    spaces = [{"id": "s-aaaaaaaaaa", "name": "Weather box", "kind": "private"}]
+    monkeypatch.setattr(cloud, "tenant", lambda name=None, refresh=False: {"tenant": {"id": "t-x", "name": "Example"}, "spaces": spaces})
+    monkeypatch.setattr(cloud, "call", lambda path, body, name=None: {"ttl": "", "version": 0})
+    kb = kn.KnowledgeBase()
+    assert sync.sync_all(kb, "prod") == {"weather-box": "ok"}
+    spaces[0]["name"] = "Garden station"                       # renamed in the cloud
+    assert sync.sync_all(kb, "prod") == {"weather-box": "ok"}, "the same local graph"
+    assert sync.listing(kb, "prod")[0]["graph"] == "weather-box"
+    spaces.clear()                                              # removed in the cloud
+    assert sync.sync_all(kb, "prod") == {"weather-box": "gone"}
+    assert sync.sync(kb, "weather-box", "prod")["status"] == "gone"
+    assert sync.listing(kb, "prod") == [{"graph": "weather-box", "id": "s-aaaaaaaaaa", "name": None, "kind": None, "gone": True}]
+
+
+def test_a_clouds_site_is_enough_to_link(monkeypatch):
+    def urlopen(req, timeout=0):
+        assert req.full_url == "https://stage.example.org/.well-known/dlab5-edge.json"
+        return io.BytesIO(json.dumps({"edgeApi": "https://api.example.org/"}).encode())
+    monkeypatch.setattr(cloud.urllib.request, "urlopen", urlopen)
+    assert cloud.discover("https://stage.example.org/") == "https://api.example.org/"
+    assert cloud.discover("https://api.example.org/edge/v1") == "https://api.example.org/edge/v1", "an API address as before"
+    assert cloud.discover("http://localhost:3000") == "http://localhost:3000"

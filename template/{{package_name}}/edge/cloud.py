@@ -142,8 +142,14 @@ def _locked() -> Iterator[None]:
         os.close(fd)
 
 
+def per_connection() -> bool:
+    """settings.SYNC_SCOPE: a folder and a sync per connection, or one merged copy."""
+    return getattr(settings, "SYNC_SCOPE", "merged") == "per-connection"
+
+
 def active_profile() -> str:
-    return PROFILE or _load_file().get("current") or "default"
+    envs = getattr(settings, "ENVIRONMENTS", None) or {}
+    return PROFILE or _load_file().get("current") or next(iter(envs), None) or "default"
 
 
 def check_profile(name: str) -> str:
@@ -161,10 +167,24 @@ def linked_profiles() -> List[str]:
     return [n for n, st in _load_file()["profiles"].items() if st.get("device_token")]
 
 
+def environments() -> List[Dict[str, Any]]:
+    """The environments the left bar switches between: settings.ENVIRONMENTS
+    (name → the cloud's site), then any other connection, each with whether it
+    is linked and whether it is the current one."""
+    envs = dict(getattr(settings, "ENVIRONMENTS", None) or {})
+    data = _load_file()
+    current = active_profile()
+    names = list(envs) + [n for n in sorted(data["profiles"]) if n not in envs]
+    return [{"name": n, "site": (data["profiles"].get(n) or {}).get("site") or envs.get(n),
+             "linked": bool((data["profiles"].get(n) or {}).get("device_token")), "current": n == current}
+            for n in names]
+
+
 def use_profile(name: str) -> None:
+    envs = getattr(settings, "ENVIRONMENTS", None) or {}
     with _locked():
         data = _load_file()
-        if check_profile(name) not in data["profiles"]:
+        if check_profile(name) not in data["profiles"] and name not in envs:
             raise CloudError(f"no connection {name}; link one first")
         data["current"] = name
         _save_file(data)
@@ -280,10 +300,32 @@ def device_info() -> Dict[str, Any]:
 
 # -------------------------------------------------------------------- link --
 
+WELL_KNOWN = "/.well-known/dlab5-edge.json"
+
+
+def discover(address: str) -> str:
+    """The edge API for an address a person knows: the cloud's own site (it
+    publishes {"edgeApi": …} at /.well-known/dlab5-edge.json), or the edge API
+    itself, as before."""
+    a = (address or "").strip().rstrip("/")
+    if a.endswith("/edge/v1") or ".execute-api." in a or not a.startswith("https://"):
+        return a
+    try:
+        req = urllib.request.Request(a + WELL_KNOWN, headers={"Accept": "application/json", "User-Agent": settings.TOOL})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            api = json.loads(r.read(4096).decode("utf-8")).get("edgeApi")
+        if isinstance(api, str) and api.startswith("https://"):
+            return api
+    except (OSError, ValueError, AttributeError):
+        pass
+    return a
+
+
 def start_link(cloud: str) -> Dict[str, Any]:
     """Ask for a pairing code. Returns what to show a person, plus the secret
-    device_code the poll needs (never show that one)."""
-    base = base_url(cloud)
+    device_code the poll needs (never show that one). `cloud` is the cloud's
+    site or its edge API address."""
+    base = base_url(discover(cloud))
     status, body = _post(f"{base}/device_authorization",
                          {"client_id": settings.CLIENT_ID, "scope": settings.SCOPE, "device_info": device_info()})
     if status != 200 or "device_code" not in body:

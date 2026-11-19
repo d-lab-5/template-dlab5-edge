@@ -94,11 +94,21 @@ def validate(g: Graph) -> Tuple[bool, List[str]]:
     return False, sorted({str(m) for m in report.objects(None, SH.resultMessage)})
 
 
+def scope_dir(profile: Optional[str] = None) -> Path:
+    """Where a connection's knowledge lives: the data folder itself, or with
+    settings.SYNC_SCOPE = "per-connection" its own <data>/<connection>/, so
+    stage and prod never share a file. Keys and settings stay in data_dir()."""
+    from . import cloud                      # cloud imports nothing of this module
+    if not cloud.per_connection():
+        return data_dir()
+    return data_dir() / cloud.check_profile(profile or cloud.active_profile())
+
+
 class KnowledgeBase:
     """The A-Box graphs of this edge. One writer at a time."""
 
-    def __init__(self, directory: Optional[Path] = None):
-        self.dir = Path(directory) if directory else data_dir() / "abox"
+    def __init__(self, directory: Optional[Path] = None, profile: Optional[str] = None):
+        self.dir = Path(directory) if directory else scope_dir(profile) / "abox"
         self._lock = threading.Lock()
 
     def _path(self, name: str) -> Path:

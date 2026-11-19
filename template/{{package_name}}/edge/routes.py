@@ -11,11 +11,13 @@ the one call that wires the layer into a tool. Owned by the edge layer.
 
     GET  /api/cloud                     connections (never a token) and the pairing in progress
     POST /api/cloud/link                {cloud, profile}: start pairing; the page shows the code
-    POST /api/cloud/unlink | /use       {profile}
+    POST /api/cloud/unlink | /use       {profile}; /use switches environment
+                                        (settings.SYNC_SCOPE = "per-connection")
     GET  /api/jobs, /api/jobs/<id>      progress
     POST /api/jobs/<id>/cancel
     GET  /api/knowledge                 the local A-Boxes
-    POST /api/knowledge/sync            {graph?}: a job, every linked connection
+    POST /api/knowledge/sync            {graph?} or {all: true}: a job; every linked
+                                        connection, or the current one alone
     GET|POST /api/chat …                the chat panel (chat.py): ask, new, stop
     GET  /api/chat/history[/<session>]  the last ten conversations; POST …/resume continues one
     GET|POST /api/chat/proposals        what the chat proposed; POST …/<id>/confirm|dismiss
@@ -158,7 +160,8 @@ def cloud_state():
         if pending and here():
             link.update(user_code=pending.get("user_code"), url=pending.get("verification_uri_complete"),
                         profile=pending.get("profile"))
-    return jsonify({**cloud.public_state(), "profiles": cloud.profiles(), "link": link, "here": here()})
+    return jsonify({**cloud.public_state(), "profiles": cloud.profiles(), "link": link, "here": here(),
+                    "environments": cloud.environments(), "per_connection": cloud.per_connection()})
 
 
 def _poll(pending: Dict[str, Any]) -> None:
@@ -214,6 +217,12 @@ def cloud_unlink():
     return jsonify(cloud.public_state())
 
 
+# Called after the current connection changes, so the tool drops what it
+# holds for the other one (its open products, caches). The layer's own: the
+# chat's proposals and history, which live with the connection's folder.
+ON_SWITCH: list = []
+
+
 @bp.post("/api/cloud/use")
 def cloud_use():
     try:
@@ -221,6 +230,11 @@ def cloud_use():
         cloud.PROFILE = None
     except cloud.CloudError as exc:
         abort(400, str(exc))
+    if cloud.per_connection():
+        _CHAT.clear()
+        for fn in ON_SWITCH:
+            fn()
+        refresh_spaces()
     return jsonify(cloud.public_state())
 
 
@@ -257,6 +271,9 @@ def knowledge_list():
 
 def _sync_job(spec: Dict[str, Any], progress, cancelled) -> Dict[str, Any]:
     kb = kn.KnowledgeBase()
+    if spec.get("all"):                      # the space list: new ones pulled, gone ones reported
+        names = [cloud.active_profile()] if cloud.per_connection() else cloud.linked_profiles()
+        return {n: sync.sync_all(kb, n) for n in names if n in cloud.linked_profiles()}
     graphs = [spec["graph"]] if spec.get("graph") else kb.graphs()
     out = {}
     for n, g in enumerate(graphs):
@@ -272,7 +289,7 @@ def knowledge_sync():
     if not cloud.linked_profiles():
         abort(409, "no connection is linked")
     data = request.get_json(silent=True) or {}
-    spec = {k: data[k] for k in ("graph", "resolve") if data.get(k)}
+    spec = {k: data[k] for k in ("graph", "resolve", "all") if data.get(k)}
     if spec.get("graph") and not kn.GRAPH_NAME.fullmatch(str(spec["graph"])):
         abort(400, "graph is a space's slug: lowercase letters, digits and -")
     return submit("knowledge-sync", spec)
@@ -289,9 +306,9 @@ def chat_state() -> Tuple[chat_mod.Proposals, chat_mod.Chat]:
         # Claude Code's own session goes to a private folder made for this run
         # (0700, a name nobody can guess or make first): outside the home
         # folder, so no other project's CLAUDE.md is read
-        _CHAT["proposals"] = chat_mod.Proposals(kn.data_dir() / "chat-proposals.json")
+        _CHAT["proposals"] = chat_mod.Proposals(kn.scope_dir() / "chat-proposals.json")
         _CHAT["chat"] = chat_mod.Chat(Path(tempfile.mkdtemp(prefix=f"{settings.TOOL}-chat-")))
-        _CHAT["history"] = chat_mod.History(kn.data_dir() / "chat-history.json")
+        _CHAT["history"] = chat_mod.History(kn.scope_dir() / "chat-history.json")
     return _CHAT["proposals"], _CHAT["chat"]
 
 
@@ -574,6 +591,16 @@ def _guard(app: Flask) -> None:
 
 # ---------------------------------------------------------- background work --
 
+def refresh_spaces() -> None:
+    """Pull the current connection's space list (and their A-Boxes) in the
+    background: at start, and when the environment is switched."""
+    try:
+        if cloud.active_profile() in cloud.linked_profiles():
+            JOBS.submit("knowledge-sync", {"all": True})
+    except (Busy, cloud.CloudError):
+        pass
+
+
 def start_first_start() -> None:
     """The first-start job, when anything is still missing."""
     try:
@@ -619,3 +646,5 @@ def start_background() -> None:
     _INSTALLED["background"] = True
     threading.Thread(target=_keep_tokens_fresh, name="token-keeper", daemon=True).start()
     start_first_start()
+    if cloud.per_connection():
+        refresh_spaces()

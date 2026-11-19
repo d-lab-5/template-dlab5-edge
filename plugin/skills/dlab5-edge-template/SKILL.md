@@ -71,6 +71,22 @@ shows the core's loading card; polling and the streaming answer stay quiet.
 Give the tool's own buttons `data-help` too, never `title=`. Those three are optional: an
 edge whose settings.py predates them works unchanged.
 
+**Where stage and prod meet is `SYNC_SCOPE`.** `"merged"` (the default) keeps
+one local copy of each A-Box and syncs it with every linked connection, so
+what is added in stage reaches prod. `"per-connection"` gives each connection
+its own folder (`<data>/<connection>/`, from `knowledge.scope_dir()`), syncs
+it with that connection alone, and lets the page switch between them: put
+`<div id="edge-env"></div>` in the side bar, name the clouds in
+`ENVIRONMENTS = {"prod": "https://<site>", "stage": "https://stage.<site>"}`,
+and drop the tool's caches in `routes.ON_SWITCH`. A tool keeping files of its
+own uses `scope_dir()`, never `data_dir()`, for them; keys stay in
+`data_dir()`. Spaces are matched by name once, then by id
+(`.sync/<connection>/spaces.json`), so a rename in the cloud keeps the local
+graph; one removed there is reported `gone`, never deleted. `sync.listing()`
+gives the space list without a call. Linking needs only the cloud's site: it
+publishes `/.well-known/dlab5-edge.json` (`scripts/well-known.mjs` in the
+cloud template), which `cloud.discover()` reads.
+
 Copy the cloud's `packages/ontology` (tbox/, shapes/) into `edge/ontology/`
 so the edge validates A-Boxes exactly as the cloud does.
 
@@ -166,4 +182,5 @@ push the cloud repo. Raise the cloud's `MIN_EDGE_VERSION` only afterwards.
 In template-dlab5-edge: `./test.sh` makes a human, iot and robot edge from the
 base and the working tree, runs each tool's tests, starts it, checks the
 guard, and round-trips an update. `BASE_REF=HEAD` takes the base at a
-commit, for a base change that is not tagged yet.
+commit, for a base change that is not tagged yet. Copier refuses a dirty
+working tree here (`pathspec … did not match`): commit first, even as a wip.

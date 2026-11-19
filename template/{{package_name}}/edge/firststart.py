@@ -88,11 +88,12 @@ def steps() -> List[Tuple[str, Callable[[], bool], Callable[..., Dict[str, Any]]
 
 
 def _pull_knowledge(progress: Progress = None, cancelled: Callable[[], bool] = lambda: False) -> Dict[str, Any]:
-    kb = kn.KnowledgeBase()
     out = {}
     for name in _knowledge_needed():
         if cancelled():
             raise Stopped()
+        # per connection, each into its own folder (settings.SYNC_SCOPE)
+        kb = kn.KnowledgeBase(profile=name) if cloud.per_connection() else kn.KnowledgeBase()
         out[name] = sync.sync_all(kb, name)
         cloud.update_state({"first_start_done": True}, name)
     return {"knowledge": out}

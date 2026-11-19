@@ -43,6 +43,21 @@ PER_LANGUAGE: List[str] = [
     "http://www.w3.org/2004/02/skos/core#prefLabel",
 ]
 
+# -- connections: where stage and prod meet ----------------------------------
+
+# "merged": one local copy of every A-Box, synced with each linked connection
+# in turn, so what is added in stage reaches prod on the next round.
+# "per-connection": each connection its own folder (<data>/<connection>/),
+# synced with it alone; the page's environment switch (#edge-env) changes
+# which one the edge, its sync and its chat work on.
+SYNC_SCOPE = "merged"
+
+# Environments offered by name, with the cloud's SITE: linking one needs only
+# that (the cloud publishes its edge API at /.well-known/dlab5-edge.json).
+# The first is the current one until another is chosen. E.g.
+#   {"prod": "https://example.org", "stage": "https://stage.example.org"}
+ENVIRONMENTS: Dict[str, str] = {}
+
 # -- the chat (a local Claude Code with only this edge's MCP tools) -----------
 
 # What a proposal from the chat may run on this edge's own API: (method, path

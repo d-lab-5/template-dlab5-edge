@@ -17,13 +17,23 @@ nothing is written, and the person picks "mine" or "theirs".
 Nothing is written anywhere until the merged graph passes the shapes. The
 cloud validates again, and refuses a write based on a version it no longer
 holds (409); then the edge merges once more.
+
+A local graph is found in the cloud by NAME the first time (the slug of the
+space's name: ids differ between clouds) and by the space's ID from then on,
+kept per connection in .sync/<connection>/spaces.json, so a space renamed in
+the cloud stays the same graph here. A space that is gone from the cloud is
+reported ("gone"), never deleted here.
+
+settings.SYNC_SCOPE says where stage and prod meet. "merged": one local copy,
+synced with every linked connection in turn. "per-connection": each
+connection its own folder (knowledge.scope_dir), synced with it alone.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from rdflib import Graph, URIRef
 from rdflib.compare import to_canonical_graph
@@ -116,17 +126,57 @@ def merge(base: Set[Triple], mine: Set[Triple], theirs: Set[Triple],
     return merged, sorted(conflicts, key=lambda c: c["key"])
 
 
+class SpaceMap:
+    """Which space of a connection each local graph is: {graph: space id}."""
+
+    def __init__(self, kb: kn.KnowledgeBase, profile: str):
+        self.path = kb.dir / ".sync" / profile / "spaces.json"
+
+    def load(self) -> Dict[str, str]:
+        try:
+            return dict(json.loads(self.path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return {}
+
+    def save(self, m: Dict[str, str]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        tmp = self.path.with_suffix(".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(m, fh, indent=1, sort_keys=True)
+        os.replace(tmp, self.path)
+
+
+def space_of(kb: kn.KnowledgeBase, graph: str, profile: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], bool]:
+    """(the connection's space for a local graph, whether it was known by id
+    and is now gone from the cloud)."""
+    name = profile or cloud.active_profile()
+    known = SpaceMap(kb, name).load().get(graph)
+    spaces = cloud.tenant(name).get("spaces") or []
+    if known:
+        hit = next((s for s in spaces if s.get("id") == known), None)
+        return hit, hit is None
+    taken = set(SpaceMap(kb, name).load().values())
+    hit = cloud.space_by_slug(graph, name)
+    return (hit if hit and hit.get("id") not in taken else None), False
+
+
 def sync(kb: kn.KnowledgeBase, graph: str, profile: Optional[str] = None,
          resolve: Optional[Dict[str, str]] = None, _attempt: int = 0) -> Dict[str, Any]:
-    """Synchronise one local graph (a space's slug) with one connection."""
+    """Synchronise one local graph with one connection."""
     name = profile or cloud.active_profile()
-    # Spaces are matched by NAME: their ids differ between clouds. The base is
-    # kept per remote graph, so linking into another tenant never merges
-    # against a stale base.
-    space = cloud.space_by_slug(graph, name)
+    # The base is kept per remote graph, so linking into another tenant never
+    # merges against a stale base.
+    space, gone = space_of(kb, graph, name)
     if space is None:
-        return {"graph": graph, "profile": name, "status": "no_space",
-                "error": f"{name} has no {settings.SPACE_NOUN} for the A-Box “{graph}”"}
+        return {"graph": graph, "profile": name, "status": "gone" if gone else "no_space",
+                "error": f"{name} has no {settings.SPACE_NOUN} for the A-Box “{graph}”"
+                         + (" any more: it was removed there; nothing here is deleted" if gone else "")}
+    m = SpaceMap(kb, name)
+    known = m.load()
+    if known.get(graph) != space["id"]:
+        known[graph] = space["id"]
+        m.save(known)
     remote_name = space["id"]
     base_store = Base(kb, name, remote_name)
     base_graph, _ = base_store.load()
@@ -173,7 +223,10 @@ def sync_everywhere(kb: kn.KnowledgeBase, graph: str,
     """Every linked connection in turn. The local graph collects what each
     brings, so a statement added in stage reaches prod on the next round."""
     out = {}
-    for name in cloud.linked_profiles():
+    names = cloud.linked_profiles()
+    if cloud.per_connection():               # stage and prod never meet here
+        names = [n for n in names if n == cloud.active_profile()]
+    for name in names:
         try:
             out[name] = sync(kb, graph, name, (resolve or {}).get(name))
         except cloud.CloudError as exc:
@@ -183,10 +236,33 @@ def sync_everywhere(kb: kn.KnowledgeBase, graph: str,
 
 def sync_all(kb: kn.KnowledgeBase, profile: Optional[str] = None) -> Dict[str, Any]:
     """Every space of a connection's tenant: its A-Box pulled (created locally
-    when new) and merged. What first start runs after linking."""
+    when new) and merged, under the graph it already has here, else its slug.
+    A local graph whose space is gone from the cloud is reported, not deleted.
+    What first start runs after linking, and the refresh of the space list."""
     name = profile or cloud.active_profile()
     out: Dict[str, Any] = {}
-    for space in cloud.tenant(name, refresh=True).get("spaces") or []:
-        slug = cloud.space_slug(space.get("name"))
-        out[slug] = sync(kb, slug, name).get("status")
+    spaces = cloud.tenant(name, refresh=True).get("spaces") or []
+    by_id = {v: g for g, v in SpaceMap(kb, name).load().items()}
+    for space in spaces:
+        graph = by_id.get(space.get("id")) or cloud.space_slug(space.get("name"))
+        out[graph] = sync(kb, graph, name).get("status")
+    ids = {s.get("id") for s in spaces}
+    for graph, sid in SpaceMap(kb, name).load().items():
+        if sid not in ids:
+            out[graph] = "gone"
+    return out
+
+
+def listing(kb: kn.KnowledgeBase, profile: Optional[str] = None) -> List[Dict[str, Any]]:
+    """A connection's spaces as this edge knows them (no call when the tenant
+    is cached): each with the local graph it is or will be, and the graphs
+    whose space is gone from the cloud, marked so."""
+    name = profile or cloud.active_profile()
+    known = SpaceMap(kb, name).load()
+    by_id = {v: g for g, v in known.items()}
+    spaces = cloud.tenant(name).get("spaces") or []
+    out = [{"graph": by_id.get(s.get("id")) or cloud.space_slug(s.get("name")), "id": s.get("id"),
+            "name": s.get("name"), "kind": s.get("kind"), "gone": False} for s in spaces]
+    ids = {s.get("id") for s in spaces}
+    out += [{"graph": g, "id": sid, "name": None, "kind": None, "gone": True} for g, sid in known.items() if sid not in ids]
     return out
